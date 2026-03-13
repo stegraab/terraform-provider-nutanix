@@ -1618,11 +1618,10 @@ func ResourceNutanixVirtualMachineV2Create(ctx context.Context, d *schema.Resour
 		} else {
 			vm := vmIntentResponse.(*config.GetVmApiResponse)
 			vmResp := vm.Data.GetValue().(config.Vm)
-
-			if len(vmResp.Nics) > 0 && len(vmResp.Nics[0].NetworkInfo.Ipv4Info.LearnedIpAddresses) != 0 {
+			if hostIP, ok := firstAvailableIPv4Address(vmResp); ok {
 				d.SetConnInfo(map[string]string{
 					"type": "ssh",
-					"host": *vmResp.Nics[0].NetworkInfo.Ipv4Info.LearnedIpAddresses[0].Value,
+					"host": hostIP,
 				})
 			}
 		}
@@ -3537,20 +3536,40 @@ func waitForIPRefreshFunc(client *vmm.Client, vmUUID string) resource.StateRefre
 		}
 
 		getResp := resp.Data.GetValue().(config.Vm)
-
-		if getResp.Nics != nil && len(getResp.Nics) > 0 {
-			for _, nic := range getResp.Nics {
-				if nic.NetworkInfo.Ipv4Info != nil {
-					for _, ip := range nic.NetworkInfo.Ipv4Info.LearnedIpAddresses {
-						if ip.Value != nil {
-							return resp, "AVAILABLE", nil
-						}
-					}
-				}
-			}
+		if _, ok := firstAvailableIPv4Address(getResp); ok {
+			return resp, "AVAILABLE", nil
 		}
 		return resp, "WAITING", nil
 	}
+}
+
+func firstAvailableIPv4Address(vm config.Vm) (string, bool) {
+	if vm.Nics == nil || len(vm.Nics) == 0 {
+		return "", false
+	}
+	for _, nic := range vm.Nics {
+		if nic.NetworkInfo == nil {
+			continue
+		}
+		if nic.NetworkInfo.Ipv4Info != nil {
+			for _, ip := range nic.NetworkInfo.Ipv4Info.LearnedIpAddresses {
+				if ip.Value != nil && *ip.Value != "" {
+					return *ip.Value, true
+				}
+			}
+		}
+		if nic.NetworkInfo.Ipv4Config != nil {
+			if ip := nic.NetworkInfo.Ipv4Config.IpAddress; ip != nil && ip.Value != nil && *ip.Value != "" {
+				return *ip.Value, true
+			}
+			for _, ip := range nic.NetworkInfo.Ipv4Config.SecondaryIpAddressList {
+				if ip.Value != nil && *ip.Value != "" {
+					return *ip.Value, true
+				}
+			}
+		}
+	}
+	return "", false
 }
 
 func expandProjectReference(pr []interface{}) *config.ProjectReference {
