@@ -2,6 +2,42 @@
 
 Terraform provider plugin to integrate with Nutanix Cloud Platform.
 
+---
+
+## Maintaining This Fork
+
+This fork uses:
+- `upstream-main` as a mirror of the official Nutanix source (`upstream/master`)
+- `main` as your custom working branch
+
+### 1. Sync the upstream mirror branch
+
+```bash
+./scripts/sync_upstream_main.sh
+```
+
+This makes `upstream-main` identical to upstream and syncs upstream tags into this fork.
+
+### 2. Rebase your custom branch onto a chosen upstream tag
+
+```bash
+git checkout main
+git fetch upstream --tags
+git rebase -i v2.3.4
+```
+
+If you are upgrading to a newer upstream release, rebase onto that newer tag instead (example `v2.4.0`).
+
+### 3. Finish and publish
+
+```bash
+git push --force-with-lease origin main
+```
+
+Then trigger the manual `Auto Tag Release On Main` workflow in GitHub Actions to create the next `-stegra-N` tag and release.
+
+---
+
 NOTE: The latest version of the Nutanix provider is [v2.3.4](https://github.com/nutanix/terraform-provider-nutanix/releases/tag/v2.3.4).
 
 Modules based on Terraform Nutanix Provider can be found here : [Modules](https://github.com/nutanix/terraform-provider-nutanix/tree/master/modules)
