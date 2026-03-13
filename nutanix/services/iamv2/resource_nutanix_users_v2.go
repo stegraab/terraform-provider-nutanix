@@ -3,7 +3,11 @@ package iamv2
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
+	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
@@ -12,6 +16,7 @@ import (
 	"github.com/nutanix/ntnx-api-golang-clients/iam-go-client/v4/models/common/v1/config"
 	import1 "github.com/nutanix/ntnx-api-golang-clients/iam-go-client/v4/models/iam/v4/authn"
 	conns "github.com/terraform-providers/terraform-provider-nutanix/nutanix"
+	iamclient "github.com/terraform-providers/terraform-provider-nutanix/nutanix/sdks/v4/iam"
 	"github.com/terraform-providers/terraform-provider-nutanix/utils"
 )
 
@@ -505,14 +510,63 @@ func resourceNutanixUserV2Update(ctx context.Context, d *schema.ResourceData, me
 }
 
 func resourceNutanixUserV2Delete(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
-	log.Printf("[DEBUG] ResourceNutanixUserV2Delete : Delete not supported yet")
-	return diag.Diagnostics{
-		{
-			Severity: diag.Warning,
-			Summary:  "Delete operation not supported",
-			Detail:   "Deleting users via Terraform is not supported yet. Please delete the user manually from the Prism Central UI if required, or use v3 resource for now",
-		},
+	conn := meta.(*conns.Client).IamAPI
+
+	readResp, err := conn.UsersAPIInstance.GetUserById(utils.StringPtr(d.Id()))
+	if err != nil {
+		if isUserNotFoundError(err) {
+			d.SetId("")
+			return nil
+		}
+		return diag.Errorf("error while fetching user %s before delete: %v", d.Id(), err)
 	}
+
+	headerParams := make(map[string]string)
+	if etag := conn.UsersAPIInstance.ApiClient.GetEtag(readResp); etag != "" {
+		headerParams["If-Match"] = etag
+	}
+
+	err = deleteUserByIDV4(conn, d.Id(), headerParams)
+	if err != nil {
+		if isUserNotFoundError(err) {
+			d.SetId("")
+			return nil
+		}
+		return diag.Errorf("error deleting user %s: %v", d.Id(), err)
+	}
+
+	d.SetId("")
+	return nil
+}
+
+func isUserNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToUpper(fmt.Sprint(err))
+	return strings.Contains(msg, "ENTITY_NOT_FOUND") || strings.Contains(msg, "NOT FOUND")
+}
+
+func deleteUserByIDV4(conn *iamclient.Client, userExtID string, headerParams map[string]string) error {
+	uri := "/api/iam/v4.0/authn/users/" + url.PathEscape(userExtID)
+	queryParams := url.Values{}
+	formParams := url.Values{}
+	contentTypes := []string{}
+	accepts := []string{"application/json"}
+	authNames := []string{"apiKeyAuthScheme", "basicAuthScheme"}
+
+	_, err := conn.UsersAPIInstance.ApiClient.CallApi(
+		&uri,
+		http.MethodDelete,
+		nil,
+		queryParams,
+		headerParams,
+		formParams,
+		accepts,
+		contentTypes,
+		authNames,
+	)
+	return err
 }
 
 func expandKVPair(pr []interface{}) []config.KVPair {
