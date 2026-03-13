@@ -1,30 +1,71 @@
-name: release
+name: Manual Release
+
 on:
-  push:
-    tags:
-      - "v*-stegra-*"
+  workflow_dispatch:
+
 permissions:
   contents: write
+
 jobs:
-  goreleaser:
+  release:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout main
         uses: actions/checkout@v4
-      - name: Unshallow
-        run: git fetch --prune --unshallow
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Fetch tags
+        run: git fetch --force --tags origin
+
+      - name: Compute and create next tag
+        id: next_tag
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          nearest_tag="$(git describe --tags --abbrev=0)"
+          if [[ "$nearest_tag" =~ ^(v[0-9]+\.[0-9]+\.[0-9]+)(-stegra-[0-9]+)?$ ]]; then
+            base_tag="${BASH_REMATCH[1]}"
+          else
+            echo "Nearest tag '$nearest_tag' is not in expected form vX.Y.Z or vX.Y.Z-stegra-N"
+            exit 1
+          fi
+
+          max_n=0
+          while IFS= read -r t; do
+            n="${t##*-}"
+            if [[ "$n" =~ ^[0-9]+$ ]] && (( n > max_n )); then
+              max_n="$n"
+            fi
+          done < <(git tag -l "${base_tag}-stegra-*")
+
+          next_n=$((max_n + 1))
+          next_tag="${base_tag}-stegra-${next_n}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$next_tag" -m "Automated release tag $next_tag"
+          git push origin "$next_tag"
+
+          echo "tag=$next_tag" >> "$GITHUB_OUTPUT"
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: 1.21
+
       - name: Import GPG key
         id: import_gpg
         uses: paultyng/ghaction-import-gpg@v2.1.0
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
           PASSPHRASE: ${{ secrets.PASSPHRASE }}
+
       - name: Set the user terminal
         run: export GPG_TTY=$(tty)
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
