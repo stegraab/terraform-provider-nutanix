@@ -9,7 +9,15 @@ permissions:
   contents: write
 
 jobs:
+  approve:
+    runs-on: ubuntu-latest
+    environment: release-approval
+    steps:
+      - name: Await approval
+        run: echo "Release tagging approved"
+
   tag:
+    needs: approve
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
