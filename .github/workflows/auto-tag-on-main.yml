@@ -1,29 +1,20 @@
 name: Auto Tag Release On Main
 
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  approve:
-    runs-on: ubuntu-latest
-    environment: release-approval
-    steps:
-      - name: Await approval
-        run: echo "Release tagging approved"
-
   tag:
-    needs: approve
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: main
 
       - name: Fetch tags
         run: git fetch --force --tags origin
@@ -35,6 +26,7 @@ jobs:
           set -euo pipefail
 
           nearest_tag="$(git describe --tags --abbrev=0)"
+          target_sha="$(git rev-parse HEAD)"
           if [[ "$nearest_tag" =~ ^(v[0-9]+\.[0-9]+\.[0-9]+)(-stegra-[0-9]+)?$ ]]; then
             base_tag="${BASH_REMATCH[1]}"
           else
@@ -42,7 +34,7 @@ jobs:
             exit 1
           fi
 
-          if existing_for_commit=$(git tag --points-at "$GITHUB_SHA" | rg "^${base_tag}-stegra-[0-9]+$" | sort -V | tail -n1); then
+          if existing_for_commit=$(git tag --points-at "$target_sha" | grep -E "^${base_tag}-stegra-[0-9]+$" | sort -V | tail -n1); then
             if [[ -n "$existing_for_commit" ]]; then
               echo "tag=$existing_for_commit" >> "$GITHUB_OUTPUT"
               echo "already_exists=true" >> "$GITHUB_OUTPUT"
