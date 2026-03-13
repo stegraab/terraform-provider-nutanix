@@ -373,7 +373,7 @@ func resourceNutanixSubnetRead(ctx context.Context, d *schema.ResourceData, meta
 			dOptions["tftp_server_name"] = utils.StringValue(resp.Status.Resources.IPConfig.DHCPOptions.TFTPServerName)
 
 			if resp.Status.Resources.IPConfig.DHCPOptions.DomainNameServerList != nil {
-				dnsList = utils.StringValueSlice(resp.Status.Resources.IPConfig.DHCPOptions.DomainNameServerList)
+				dnsList = stableOrderStringList(utils.StringValueSlice(resp.Status.Resources.IPConfig.DHCPOptions.DomainNameServerList), d.Get("dhcp_domain_name_server_list"))
 			}
 			if resp.Status.Resources.IPConfig.DHCPOptions.DomainSearchList != nil {
 				dsList = utils.StringValueSlice(resp.Status.Resources.IPConfig.DHCPOptions.DomainSearchList)
@@ -723,6 +723,43 @@ func getSubnetResources(d *schema.ResourceData, subnet *v3.SubnetResources) {
 	ip.DHCPOptions = dhcpo
 
 	subnet.IPConfig = ip
+}
+
+func stableOrderStringList(apiList []string, currentRaw interface{}) []string {
+	if len(apiList) <= 1 {
+		return apiList
+	}
+
+	currentList, ok := currentRaw.([]interface{})
+	if !ok || len(currentList) == 0 {
+		return apiList
+	}
+
+	remaining := make(map[string]int, len(apiList))
+	for _, item := range apiList {
+		remaining[item]++
+	}
+
+	stableList := make([]string, 0, len(apiList))
+	for _, item := range currentList {
+		v, ok := item.(string)
+		if !ok {
+			continue
+		}
+		if remaining[v] > 0 {
+			stableList = append(stableList, v)
+			remaining[v]--
+		}
+	}
+
+	for _, item := range apiList {
+		if remaining[item] > 0 {
+			stableList = append(stableList, item)
+			remaining[item]--
+		}
+	}
+
+	return stableList
 }
 
 func resourceSubnetInstanceStateUpgradeV0(ctx context.Context, is map[string]interface{}, meta interface{}) (map[string]interface{}, error) {
