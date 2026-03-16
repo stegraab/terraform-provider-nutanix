@@ -7,13 +7,14 @@ import (
 )
 
 type Client struct {
-	Routes                *api.RoutesApi
-	RoutesTable           *api.RouteTablesApi
-	APIClientInstance     *network.ApiClient
-	RoutingPolicy         *api.RoutingPoliciesApi
-	SubnetAPIInstance     *api.SubnetsApi
-	VpcAPIInstance        *api.VpcsApi
-	FloatingIPAPIInstance *api.FloatingIpsApi
+	Routes                          *api.RoutesApi
+	RoutesTable                     *api.RouteTablesApi
+	APIClientInstance               *network.ApiClient
+	RoutingPolicy                   *api.RoutingPoliciesApi
+	SubnetAPIInstance               *api.SubnetsApi
+	VpcAPIInstance                  *api.VpcsApi
+	FloatingIPAPIInstance           *api.FloatingIpsApi
+	LoadBalancerSessionsAPIInstance *api.LoadBalancerSessionsApi
 }
 
 func NewNetworkingClient(credentials client.Credentials) (*Client, error) {
@@ -33,12 +34,14 @@ func NewNetworkingClient(credentials client.Credentials) (*Client, error) {
 	}
 
 	f := &Client{
-		Routes:                api.NewRoutesApi(baseClient),
-		RoutesTable:           api.NewRouteTablesApi(baseClient),
-		RoutingPolicy:         api.NewRoutingPoliciesApi(baseClient),
-		SubnetAPIInstance:     api.NewSubnetsApi(baseClient),
-		VpcAPIInstance:        api.NewVpcsApi(baseClient),
-		FloatingIPAPIInstance: api.NewFloatingIpsApi(baseClient),
+		Routes:                          api.NewRoutesApi(baseClient),
+		RoutesTable:                     api.NewRouteTablesApi(baseClient),
+		APIClientInstance:               baseClient,
+		RoutingPolicy:                   api.NewRoutingPoliciesApi(baseClient),
+		SubnetAPIInstance:               api.NewSubnetsApi(baseClient),
+		VpcAPIInstance:                  api.NewVpcsApi(baseClient),
+		FloatingIPAPIInstance:           api.NewFloatingIpsApi(baseClient),
+		LoadBalancerSessionsAPIInstance: api.NewLoadBalancerSessionsApi(baseClient),
 	}
 
 	return f, nil

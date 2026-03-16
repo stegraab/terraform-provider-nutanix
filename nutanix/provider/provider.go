@@ -388,6 +388,7 @@ func Provider() *schema.Provider {
 			"nutanix_pbr_v2":                                  networkingv2.ResourceNutanixPbrsV2(),
 			"nutanix_service_groups_v2":                       networkingv2.ResourceNutanixServiceGroupsV2(),
 			"nutanix_address_groups_v2":                       networkingv2.ResourceNutanixAddressGroupsV2(),
+			"nutanix_nlb_v2":                                  networkingv2.ResourceNutanixNLBV2(),
 			"nutanix_directory_services_v2":                   iamv2.ResourceNutanixDirectoryServicesV2(),
 			"nutanix_user_groups_v2":                          iamv2.ResourceNutanixUserGroupsV2(),
 			"nutanix_roles_v2":                                iamv2.ResourceNutanixRolesV2(),
