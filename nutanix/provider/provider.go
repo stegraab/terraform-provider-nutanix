@@ -14,6 +14,7 @@ import (
 	"github.com/terraform-providers/terraform-provider-nutanix/nutanix/services/clustersv2"
 	"github.com/terraform-providers/terraform-provider-nutanix/nutanix/services/datapoliciesv2"
 	"github.com/terraform-providers/terraform-provider-nutanix/nutanix/services/dataprotectionv2"
+	"github.com/terraform-providers/terraform-provider-nutanix/nutanix/services/filesv4"
 	"github.com/terraform-providers/terraform-provider-nutanix/nutanix/services/foundation"
 	foundationCentral "github.com/terraform-providers/terraform-provider-nutanix/nutanix/services/foundationCentral"
 	"github.com/terraform-providers/terraform-provider-nutanix/nutanix/services/iam"
@@ -448,6 +449,7 @@ func Provider() *schema.Provider {
 			"nutanix_bucket":                                  objectstoresv2.ResourceNutanixBucket(),
 			"nutanix_bucket_policy":                           objectstoresv2.ResourceNutanixBucketPolicy(),
 			"nutanix_object_store_certificate_v2":             objectstoresv2.ResourceNutanixObjectStoreCertificateV2(),
+			"nutanix_file_server_v2":                          filesv4.ResourceNutanixFileServerV2(),
 		},
 		ConfigureContextFunc: providerConfigure,
 	}

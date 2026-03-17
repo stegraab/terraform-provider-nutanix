@@ -1,0 +1,39 @@
+pc_endpoint     = "prism-central.example.local"
+name            = "my-testing"
+size_in_gib     = 1024
+nvms_count      = 3
+dns_domain_name = "example.local"
+dns_servers     = ["10.66.0.164", "10.66.0.87"]
+ntp_servers     = ["time.google.com"]
+memory_gib      = 12
+vcpus           = 4
+file_server_version = "5.2"
+
+cvm_ip_addresses = [
+  "10.112.1.200",
+]
+
+cluster_ext_id = "000640b4-380a-586c-2558-7c8c0932c180"
+
+external_network_ext_ids = [
+  "6eefcf43-8eaf-4047-85de-70881380fdb7",
+]
+
+internal_network_ext_ids = [
+  "6eefcf43-8eaf-4047-85de-70881380fdb7",
+]
+
+# Optional LDAP/NFS directory service settings
+# directory_service = [
+#   {
+#     local_domain = "NONE"
+#     nfs_version  = "NFSV3V4"
+#     ldap_domain = {
+#       protocol_type = "NFS"
+#       servers       = ["ldaps://ldap-server.company.com:636"]
+#       base_dn       = "DC=company,DC=com"
+#       bind_dn       = "CN=svc-ldap,CN=Users,DC=company,DC=com"
+#       bind_password = "replace-me"
+#     }
+#   }
+# ]

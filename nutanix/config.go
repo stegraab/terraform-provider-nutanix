@@ -13,6 +13,7 @@ import (
 	"github.com/terraform-providers/terraform-provider-nutanix/nutanix/sdks/v4/clusters"
 	"github.com/terraform-providers/terraform-provider-nutanix/nutanix/sdks/v4/datapolicies"
 	"github.com/terraform-providers/terraform-provider-nutanix/nutanix/sdks/v4/dataprotection"
+	"github.com/terraform-providers/terraform-provider-nutanix/nutanix/sdks/v4/files"
 	"github.com/terraform-providers/terraform-provider-nutanix/nutanix/sdks/v4/iam"
 	"github.com/terraform-providers/terraform-provider-nutanix/nutanix/sdks/v4/lcm"
 	"github.com/terraform-providers/terraform-provider-nutanix/nutanix/sdks/v4/microseg"
@@ -131,6 +132,10 @@ func (c *Config) Client() (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	filesClient, err := files.NewFilesClient(configCreds)
+	if err != nil {
+		return nil, err
+	}
 	return &Client{
 		WaitTimeout:         c.WaitTimeout,
 		API:                 v3Client,
@@ -150,6 +155,7 @@ func (c *Config) Client() (*Client, error) {
 		LcmAPI:              LcmClient,
 		CalmAPI:             calmClient,
 		ObjectStoreAPI:      ObjectStoreClient,
+		FilesAPI:            filesClient,
 	}, nil
 }
 
@@ -173,4 +179,5 @@ type Client struct {
 	LcmAPI              *lcm.Client
 	CalmAPI             *selfservice.Client
 	ObjectStoreAPI      *objectstores.Client
+	FilesAPI            *files.Client
 }

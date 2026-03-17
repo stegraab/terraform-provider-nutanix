@@ -1,0 +1,14 @@
+pc_endpoint     = "prism-central.se-bod.stegra.tech"
+name            = "my-file-srv-5"
+size_in_gib     = 1024
+nvms_count      = 3
+dns_domain_name = "se-bod.stegra.tech"
+dns_servers     = ["10.66.0.164", "10.66.0.87"]
+ntp_servers     = ["time.google.com"]
+memory_gib      = 12
+vcpus           = 4
+file_server_version = "5.2"
+cvm_ip_addresses = ["10.112.1.200"]
+cluster_ext_id = "000640b4-380a-586c-2558-7c8c0932c180"
+external_network_ext_ids = ["6eefcf43-8eaf-4047-85de-70881380fdb7"]
+internal_network_ext_ids = ["6eefcf43-8eaf-4047-85de-70881380fdb7"]
