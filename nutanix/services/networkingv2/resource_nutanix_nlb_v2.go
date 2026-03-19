@@ -442,7 +442,19 @@ func expandNLBListener(pr []interface{}) *import1.Listener {
 		}
 
 		if ipAddress, ok := vipMap["ip_address"].([]interface{}); ok && len(ipAddress) > 0 {
-			virtualIP.IpAddress = expandIPAddressMap(ipAddress)
+			vipIPAddress := expandIPAddressMap(ipAddress)
+			// NLB listener static VIP expects a plain address value (no CIDR suffix).
+			// Some Terraform paths populate prefix_length as 0 when omitted, which
+			// results in malformed values like "10.1.2.3/0" in API requests.
+			if vipIPAddress != nil {
+				if vipIPAddress.Ipv4 != nil {
+					vipIPAddress.Ipv4.PrefixLength = nil
+				}
+				if vipIPAddress.Ipv6 != nil {
+					vipIPAddress.Ipv6.PrefixLength = nil
+				}
+			}
+			virtualIP.IpAddress = vipIPAddress
 		}
 
 		listener.VirtualIP = virtualIP

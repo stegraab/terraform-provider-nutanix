@@ -17,13 +17,13 @@ resource "nutanix_file_server_v2" "example" {
   name            = "my-testing"
   size_in_gib     = 1024
   nvms_count      = 3
-  dns_domain_name = "se-bod.stegra.tech"
+  dns_domain_name = "example.local"
 
   dns_servers {
-    value = "10.66.0.164"
+    value = "192.0.2.10"
   }
   dns_servers {
-    value = "10.66.0.87"
+    value = "192.0.2.11"
   }
 
   ntp_servers {
@@ -35,19 +35,19 @@ resource "nutanix_file_server_v2" "example" {
   version    = "5.2"
 
   cvm_ip_addresses {
-    value = "10.112.1.200"
+    value = "192.0.2.20"
   }
 
-  cluster_ext_id = "000640b4-380a-586c-2558-7c8c0932c180"
+  cluster_ext_id = "99999999-9999-4999-8999-999999999999"
 
   external_networks {
     is_managed     = true
-    network_ext_id = "6eefcf43-8eaf-4047-85de-70881380fdb7"
+    network_ext_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
   }
 
   internal_networks {
     is_managed     = true
-    network_ext_id = "6eefcf43-8eaf-4047-85de-70881380fdb7"
+    network_ext_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
   }
 
   directory_service {

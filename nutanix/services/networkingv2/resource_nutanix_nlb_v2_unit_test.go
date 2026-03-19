@@ -72,3 +72,77 @@ func TestExpandNLBHealthCheckMergesPartialOverrides(t *testing.T) {
 		t.Fatalf("expected failure threshold 3, got %d", *got.FailureThreshold)
 	}
 }
+
+func TestExpandNLBListenerDropsIPv4PrefixLengthWhenZero(t *testing.T) {
+	got := expandNLBListener([]interface{}{
+		map[string]interface{}{
+			"protocol": "TCP",
+			"port_ranges": []interface{}{
+				map[string]interface{}{
+					"start_port": 443,
+					"end_port":   443,
+				},
+			},
+			"virtual_ip": []interface{}{
+				map[string]interface{}{
+					"subnet_reference": "subnet-uuid",
+					"assignment_type":  "STATIC",
+					"ip_address": []interface{}{
+						map[string]interface{}{
+							"ipv4": []interface{}{
+								map[string]interface{}{
+									"value":         "10.128.2.19",
+									"prefix_length": 0,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+
+	if got == nil || got.VirtualIP == nil || got.VirtualIP.IpAddress == nil || got.VirtualIP.IpAddress.Ipv4 == nil {
+		t.Fatal("expected listener virtual IP with IPv4 address")
+	}
+	if got.VirtualIP.IpAddress.Ipv4.PrefixLength != nil {
+		t.Fatalf("expected nil prefix length, got %v", *got.VirtualIP.IpAddress.Ipv4.PrefixLength)
+	}
+}
+
+func TestExpandNLBListenerDropsIPv4PrefixLengthWhenProvided(t *testing.T) {
+	got := expandNLBListener([]interface{}{
+		map[string]interface{}{
+			"protocol": "TCP",
+			"port_ranges": []interface{}{
+				map[string]interface{}{
+					"start_port": 443,
+					"end_port":   443,
+				},
+			},
+			"virtual_ip": []interface{}{
+				map[string]interface{}{
+					"subnet_reference": "subnet-uuid",
+					"assignment_type":  "STATIC",
+					"ip_address": []interface{}{
+						map[string]interface{}{
+							"ipv4": []interface{}{
+								map[string]interface{}{
+									"value":         "10.128.2.19",
+									"prefix_length": 28,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+
+	if got == nil || got.VirtualIP == nil || got.VirtualIP.IpAddress == nil || got.VirtualIP.IpAddress.Ipv4 == nil {
+		t.Fatal("expected listener virtual IP with IPv4 address")
+	}
+	if got.VirtualIP.IpAddress.Ipv4.PrefixLength != nil {
+		t.Fatalf("expected nil prefix length, got %v", *got.VirtualIP.IpAddress.Ipv4.PrefixLength)
+	}
+}
