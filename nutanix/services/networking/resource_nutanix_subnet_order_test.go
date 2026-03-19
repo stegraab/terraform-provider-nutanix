@@ -4,25 +4,25 @@ import "testing"
 
 func TestStableOrderStringList(t *testing.T) {
 	tests := []struct {
-		name       string
+		name        string
 		apiList     []string
 		currentRaw  interface{}
 		expectedOut []string
 	}{
 		{
-			name:       "preserves current state ordering for same values",
+			name:        "preserves current state ordering for same values",
 			apiList:     []string{"10.66.0.164", "10.66.0.87"},
 			currentRaw:  []interface{}{"10.66.0.87", "10.66.0.164"},
 			expectedOut: []string{"10.66.0.87", "10.66.0.164"},
 		},
 		{
-			name:       "appends unexpected api values",
+			name:        "appends unexpected api values",
 			apiList:     []string{"10.66.0.164", "10.66.0.87", "10.66.0.200"},
 			currentRaw:  []interface{}{"10.66.0.87", "10.66.0.164"},
 			expectedOut: []string{"10.66.0.87", "10.66.0.164", "10.66.0.200"},
 		},
 		{
-			name:       "returns api order when current is missing",
+			name:        "returns api order when current is missing",
 			apiList:     []string{"10.66.0.164", "10.66.0.87"},
 			currentRaw:  nil,
 			expectedOut: []string{"10.66.0.164", "10.66.0.87"},
