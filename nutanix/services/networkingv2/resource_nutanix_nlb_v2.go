@@ -15,8 +15,10 @@ import (
 	netclient "github.com/nutanix/ntnx-api-golang-clients/networking-go-client/v4/client"
 	import1 "github.com/nutanix/ntnx-api-golang-clients/networking-go-client/v4/models/networking/v4/config"
 	import4 "github.com/nutanix/ntnx-api-golang-clients/networking-go-client/v4/models/prism/v4/config"
+	import2 "github.com/nutanix/ntnx-api-golang-clients/prism-go-client/v4/models/prism/v4/config"
 	conns "github.com/terraform-providers/terraform-provider-nutanix/nutanix"
 	networkingsdk "github.com/terraform-providers/terraform-provider-nutanix/nutanix/sdks/v4/networking"
+	prismsdk "github.com/terraform-providers/terraform-provider-nutanix/nutanix/sdks/v4/prism"
 	"github.com/terraform-providers/terraform-provider-nutanix/utils"
 )
 
@@ -219,22 +221,6 @@ func ResourceNutanixNLBV2() *schema.Resource {
 func resourceNutanixNLBV2Create(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
 	conn := meta.(*conns.Client).NetworkingAPI
 
-	name := d.Get("name").(string)
-	filter := fmt.Sprintf("name eq '%s'", name)
-	listResp, err := conn.LoadBalancerSessionsAPIInstance.ListLoadBalancerSessions(nil, nil, &filter, nil, nil)
-	if err != nil {
-		return diag.Errorf("error while listing load balancer sessions : %v", err)
-	}
-
-	items, err := extractNLBSessionList(listResp)
-	if err != nil {
-		return diag.Errorf("error while parsing load balancer sessions list : %v", err)
-	}
-	if len(items) > 0 && items[0].ExtId != nil {
-		d.SetId(*items[0].ExtId)
-		return resourceNutanixNLBV2Read(ctx, d, meta)
-	}
-
 	reqBody := expandNLBSessionFromResourceData(d)
 	resp, err := conn.LoadBalancerSessionsAPIInstance.CreateLoadBalancerSession(reqBody)
 	if err != nil {
@@ -249,20 +235,12 @@ func resourceNutanixNLBV2Create(ctx context.Context, d *schema.ResourceData, met
 		return diags
 	}
 
-	readResp, err := conn.LoadBalancerSessionsAPIInstance.ListLoadBalancerSessions(nil, nil, &filter, nil, nil)
+	createdID, err := fetchNLBResourceIDFromTask(meta.(*conns.Client).PrismAPI, taskRef.ExtId)
 	if err != nil {
-		return diag.Errorf("error while fetching load balancer session after create : %v", err)
+		return diag.Errorf("error while fetching created load balancer session ID : %v", err)
 	}
 
-	created, err := extractNLBSessionList(readResp)
-	if err != nil {
-		return diag.Errorf("error while parsing load balancer session after create : %v", err)
-	}
-	if len(created) == 0 || created[0].ExtId == nil {
-		return diag.Errorf("unable to find load balancer session %q after create", name)
-	}
-
-	d.SetId(*created[0].ExtId)
+	d.SetId(createdID)
 	return resourceNutanixNLBV2Read(ctx, d, meta)
 }
 
@@ -785,4 +763,18 @@ func extractNLBTaskReference(resp *import1.TaskReferenceApiResponse) (import4.Ta
 	}
 
 	return taskRef, nil
+}
+
+func fetchNLBResourceIDFromTask(taskConn *prismsdk.Client, taskUUID *string) (string, error) {
+	resourceUUID, err := taskConn.TaskRefAPI.GetTaskById(taskUUID, nil)
+	if err != nil {
+		return "", err
+	}
+
+	taskResp := resourceUUID.Data.GetValue().(import2.Task)
+	if len(taskResp.EntitiesAffected) == 0 || taskResp.EntitiesAffected[0].ExtId == nil {
+		return "", fmt.Errorf("task %q did not report any created entities", utils.StringValue(taskUUID))
+	}
+
+	return *taskResp.EntitiesAffected[0].ExtId, nil
 }
