@@ -99,8 +99,16 @@ resource "nutanix_object_store_v2" "example" {
 # Creating certificate for object store
 resource "nutanix_object_store_certificate_v2" "example" {
   object_store_ext_id = nutanix_object_store_v2.example.id
-  # path to certificate json file
-  path = "./object_store_cert.json"
+  json_body = jsonencode({
+    alternateIps = [
+      {
+        ipv4 = {
+          value = "10.44.77.123"
+        }
+      }
+    ]
+    shouldGenerate = true
+  })
 }
 
 

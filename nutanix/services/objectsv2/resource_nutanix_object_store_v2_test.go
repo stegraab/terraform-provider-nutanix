@@ -389,7 +389,7 @@ func testAccObjectStoreCertificateResourceConfig() string {
 	return fmt.Sprintf(`
 resource "nutanix_object_store_certificate_v2" "test" {
   object_store_ext_id = nutanix_object_store_v2.test.id
-  path                = "%s"
+  json_body           = file("%s")
 }
 
 data "nutanix_certificate_v2" "fetch" {
