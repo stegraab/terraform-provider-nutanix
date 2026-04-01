@@ -131,7 +131,7 @@ func resourceNutanixBucketPolicyDelete(ctx context.Context, d *schema.ResourceDa
 	)
 
 	// Prefer server-side delete when supported.
-	respBody, statusCode, err := doObjectStoreProxyJSONRequest(ctx, cfg, http.MethodDelete, endpoint, nil, nil)
+	_, statusCode, err := doObjectStoreProxyJSONRequest(ctx, cfg, http.MethodDelete, endpoint, nil, nil)
 	if err != nil {
 		return diag.FromErr(err)
 	}
@@ -149,7 +149,7 @@ func resourceNutanixBucketPolicyDelete(ctx context.Context, d *schema.ResourceDa
 		"Statement": []interface{}{},
 		"Version":   "2.0",
 	}
-	respBody, statusCode, err = doObjectStoreProxyJSONRequest(ctx, cfg, http.MethodPut, endpoint, nil, emptyPolicy)
+	respBody, statusCode, err := doObjectStoreProxyJSONRequest(ctx, cfg, http.MethodPut, endpoint, nil, emptyPolicy)
 	if err != nil {
 		return diag.FromErr(err)
 	}

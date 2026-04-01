@@ -255,6 +255,7 @@ func expandFqdn(fqdnList interface{}) []objectsCommon.FQDN {
 	}
 	return fqdnListAPI
 }
+
 // flattenFQDNs flattens the FQDNs from the API model into the schema
 func flattenFQDNs(fQDN []objectsCommon.FQDN) []map[string]interface{} {
 	if len(fQDN) == 0 {
