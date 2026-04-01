@@ -525,7 +525,7 @@ func getFileServerByName(apiClient *filesClient.ApiClient, name string) (map[str
 		return nil, err
 	}
 	if statusCode >= http.StatusBadRequest || filesHasError(respBody) {
-		return nil, fmt.Errorf(filesErrorMessage(respBody, statusCode))
+		return nil, fmt.Errorf("%s", filesErrorMessage(respBody, statusCode))
 	}
 
 	data, ok := respBody["data"].([]interface{})
@@ -553,7 +553,7 @@ func getFileServerByID(apiClient *filesClient.ApiClient, extID string) (map[stri
 		if filesIsNotFound(respBody) {
 			return nil, true, nil
 		}
-		return nil, false, fmt.Errorf(filesErrorMessage(respBody, statusCode))
+		return nil, false, fmt.Errorf("%s", filesErrorMessage(respBody, statusCode))
 	}
 
 	data, ok := respBody["data"].(map[string]interface{})
@@ -589,7 +589,7 @@ func getDirectoryService(apiClient *filesClient.ApiClient, fileServerExtID strin
 		if filesIsNotFound(listResp) {
 			return nil, "", true, nil
 		}
-		return nil, "", false, fmt.Errorf(filesErrorMessage(listResp, statusCode))
+		return nil, "", false, fmt.Errorf("%s", filesErrorMessage(listResp, statusCode))
 	}
 
 	data, _ := listResp["data"].([]interface{})
@@ -614,7 +614,7 @@ func getDirectoryService(apiClient *filesClient.ApiClient, fileServerExtID strin
 		if filesIsNotFound(getResp) {
 			return nil, "", true, nil
 		}
-		return nil, "", false, fmt.Errorf(filesErrorMessage(getResp, statusCode))
+		return nil, "", false, fmt.Errorf("%s", filesErrorMessage(getResp, statusCode))
 	}
 
 	dataObj, ok := getResp["data"].(map[string]interface{})
@@ -654,7 +654,7 @@ func updateDirectoryService(apiClient *filesClient.ApiClient, fileServerExtID st
 		return err
 	}
 	if statusCode >= http.StatusBadRequest || filesHasError(respBody) {
-		return fmt.Errorf(filesErrorMessage(respBody, statusCode))
+		return fmt.Errorf("%s", filesErrorMessage(respBody, statusCode))
 	}
 	return nil
 }
