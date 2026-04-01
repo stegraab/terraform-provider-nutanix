@@ -16,9 +16,11 @@ This operation creates a new default certificate and keys. It also creates the a
 ## Example Usage
 
 ```hcl
-data "nutanix_certificate_v2" "example"{
+resource "nutanix_object_store_certificate_v2" "example" {
   object_store_ext_id = "ac91151a-28b4-4ffe-b150-6bcb2ec80cd4"
-  ext_id              = "ef0a9a54-e7e1-42e2-a59f-de779ec1c9ea"
+  json_body = jsonencode({
+    shouldGenerate = true
+  })
 }
 
 ```
@@ -28,15 +30,21 @@ data "nutanix_certificate_v2" "example"{
 The following arguments are supported:
 
 - `object_store_ext_id`: -(Required) The UUID of the Object store.
-- `ext_id`: -(Required) The UUID of the certificate of an Object store.
+- `path`: -(Optional) Path to a JSON file containing the certificate request payload. Conflicts with `json_body`.
+- `json_body`: -(Optional, Sensitive) Raw JSON string containing the certificate request payload. Use this when you want to build the payload dynamically in Terraform without creating a local file. Conflicts with `path`.
 
 ## Attributes Reference
 
 The following attributes are exported:
 
-- `path`: -(Required) Path to a JSON file which contains the public certificates, private key, and CA certificate or chain, along with a list of alternate FQDNs and alternate IPs to create a certificate for the Object store.
+- `alternate_fqdns`: - The alternate FQDNs present on the certificate.
+- `alternate_ips`: - The alternate IPs present on the certificate.
+- `tenant_id`: - The UUID of the tenant that owns the certificate.
+- `ext_id`: - The UUID of the certificate of an Object store.
+- `links`: - API links for the certificate resource.
+- `metadata`: - Metadata for the certificate resource.
 
-The Content of the JSON file :
+The content accepted by `path` and `json_body`:
 | Field           | Description                                                                                                                                                                                                 |
 |----------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `alternateFqdns` | The list of alternate FQDNs for accessing the Object store. The FQDNs must consist of at least 2 parts separated by a '.'. Each part can contain upper and lower case letters, digits, hyphens or underscores but must begin and end with a letter. Each part can be up to 63 characters long. For example: `objects-0.pc_nutanix.com`. |
@@ -73,6 +81,23 @@ The Content of the JSON file :
   "ca": "-----BEGIN CERTIFICATE-----\nMIIDzTCCArWgAwIBAgIUI...\n-----END CERTIFICATE-----",
   "publicCert": "-----BEGIN CERTIFICATE-----\nMIIDzTCCArWgAwIBAgIUI...\n-----END CERTIFICATE-----",
   "privateKey": "-----BEGIN RSA PRIVATE KEY-----\nMIIDzTCCArWgAwIBAgIUI...\n-----END RSA PRIVATE KEY-----"
+}
+```
+
+## Terraform Example With Dynamic JSON
+```hcl
+resource "nutanix_object_store_certificate_v2" "example" {
+  object_store_ext_id = nutanix_object_store_v2.example.id
+  json_body = jsonencode({
+    alternateIps = [
+      {
+        ipv4 = {
+          value = "10.44.77.123"
+        }
+      }
+    ]
+    shouldGenerate = true
+  })
 }
 ```
 

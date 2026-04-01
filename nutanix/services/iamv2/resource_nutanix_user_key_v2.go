@@ -218,6 +218,13 @@ func resourceNutanixUserKeyV2Create(ctx context.Context, d *schema.ResourceData,
 	}
 	getResp := resp.Data.GetValue().(import1.Key)
 	d.SetId(utils.StringValue(getResp.ExtId))
+
+	// Object/API key material may be returned only on create. Seed state before read.
+	if keyDetails := flattenKeyDetails(getResp.KeyDetails); keyDetails != nil {
+		if err = d.Set("key_details", keyDetails); err != nil {
+			return diag.Errorf("error while setting key_details from create response: %v", err)
+		}
+	}
 	return resourceNutanixUserKeyV2Read(ctx, d, meta)
 }
 
@@ -285,7 +292,13 @@ func resourceNutanixUserKeyV2Read(ctx context.Context, d *schema.ResourceData, m
 	if err := d.Set("last_used_time", flattenTime(keyConfig.LastUsedTime)); err != nil {
 		return diag.Errorf("error while setting last_used_time: %v", err)
 	}
-	if err := d.Set("key_details", flattenKeyDetails(keyConfig.KeyDetails)); err != nil {
+	readKeyDetails := flattenKeyDetails(keyConfig.KeyDetails)
+	existingKeyDetails := d.Get("key_details")
+	if shouldPreserveExistingObjectKeySecret(readKeyDetails, existingKeyDetails) {
+		readKeyDetails = existingKeyDetails
+	}
+
+	if err := d.Set("key_details", readKeyDetails); err != nil {
 		return diag.Errorf("error while setting key_details: %v", err)
 	}
 	d.SetId(utils.StringValue(keyConfig.ExtId))
@@ -324,6 +337,54 @@ func flattenKeyDetails(oneOfKeyKeyDetails *import1.OneOfKeyKeyDetails) interface
 	}
 
 	return []map[string]interface{}{keyDetailsMap}
+}
+
+func shouldPreserveExistingObjectKeySecret(readKeyDetails interface{}, existingKeyDetails interface{}) bool {
+	return objectKeySecretFromDetails(existingKeyDetails) != "" && objectKeySecretFromDetails(readKeyDetails) == ""
+}
+
+func objectKeySecretFromDetails(keyDetails interface{}) string {
+	entries, ok := keyDetails.([]interface{})
+	if !ok || len(entries) == 0 {
+		return ""
+	}
+
+	entry, ok := entries[0].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+
+	objectKeyDetailsRaw, ok := entry["object_key_details"]
+	if !ok {
+		return ""
+	}
+
+	objectKeyDetails, ok := objectKeyDetailsRaw.([]interface{})
+	if !ok || len(objectKeyDetails) == 0 {
+		return ""
+	}
+
+	objectKey, ok := objectKeyDetails[0].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+
+	secretRaw, ok := objectKey["secret_key"]
+	if !ok || secretRaw == nil {
+		return ""
+	}
+
+	switch s := secretRaw.(type) {
+	case string:
+		return s
+	case *string:
+		if s == nil {
+			return ""
+		}
+		return *s
+	default:
+		return ""
+	}
 }
 
 func resourceNutanixUserKeyV2Update(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {

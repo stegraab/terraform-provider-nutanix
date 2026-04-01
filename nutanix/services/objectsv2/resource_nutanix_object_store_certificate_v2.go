@@ -3,17 +3,21 @@ package objectstoresv2
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
+	"os"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
 	objectsCommon "github.com/nutanix/ntnx-api-golang-clients/objects-go-client/v4/models/common/v1/config"
 	"github.com/nutanix/ntnx-api-golang-clients/objects-go-client/v4/models/objects/v4/config"
 	objectPrismConfig "github.com/nutanix/ntnx-api-golang-clients/objects-go-client/v4/models/prism/v4/config"
 	prismConfig "github.com/nutanix/ntnx-api-golang-clients/prism-go-client/v4/models/prism/v4/config"
 	conns "github.com/terraform-providers/terraform-provider-nutanix/nutanix"
 	"github.com/terraform-providers/terraform-provider-nutanix/nutanix/common"
+	objectstores "github.com/terraform-providers/terraform-provider-nutanix/nutanix/sdks/v4/objectstores"
 	"github.com/terraform-providers/terraform-provider-nutanix/utils"
 )
 
@@ -29,8 +33,16 @@ func ResourceNutanixObjectStoreCertificateV2() *schema.Resource {
 				Required: true,
 			},
 			"path": {
-				Type:     schema.TypeString,
-				Required: true,
+				Type:         schema.TypeString,
+				Optional:     true,
+				ExactlyOneOf: []string{"path", "json_body"},
+			},
+			"json_body": {
+				Type:         schema.TypeString,
+				Optional:     true,
+				Sensitive:    true,
+				ValidateFunc: validation.StringIsJSON,
+				ExactlyOneOf: []string{"path", "json_body"},
 			},
 			// computed attributes
 			"alternate_fqdns": {
@@ -90,9 +102,7 @@ func ResourceNutanixObjectStoreCertificateV2Create(ctx context.Context, d *schem
 	etagValue := conn.ObjectStoresAPIInstance.ApiClient.GetEtag(readResp)
 	args["If-Match"] = utils.StringPtr(etagValue)
 
-	filePath := d.Get("path").(string)
-
-	resp, err := conn.ObjectStoresAPIInstance.CreateCertificate(utils.StringPtr(objectStoreExtID), utils.StringPtr(filePath), args)
+	resp, err := createObjectStoreCertificate(conn, objectStoreExtID, d, args)
 	if err != nil {
 		return diag.Errorf("error creating object store certificate: %s", err)
 	}
@@ -173,6 +183,78 @@ func ResourceNutanixObjectStoreCertificateV2Delete(ctx context.Context, d *schem
 	return nil
 }
 
+func createObjectStoreCertificate(conn *objectstores.Client, objectStoreExtID string, d *schema.ResourceData, args map[string]interface{}) (*config.CreateCertificateApiResponse, error) {
+	if jsonBody, ok := d.GetOk("json_body"); ok {
+		return createObjectStoreCertificateFromJSON(conn, objectStoreExtID, jsonBody.(string), args)
+	}
+
+	filePath := d.Get("path").(string)
+	return conn.ObjectStoresAPIInstance.CreateCertificate(utils.StringPtr(objectStoreExtID), utils.StringPtr(filePath), args)
+}
+
+func createObjectStoreCertificateFromJSON(conn *objectstores.Client, objectStoreExtID, jsonBody string, args map[string]interface{}) (*config.CreateCertificateApiResponse, error) {
+	normalizedJSONBody, err := normalizeObjectStoreCertificateJSONBody(jsonBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse json_body: %w", err)
+	}
+
+	tempFile, err := os.CreateTemp("", "nutanix-object-store-certificate-*.json")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temporary certificate payload file: %w", err)
+	}
+	defer os.Remove(tempFile.Name())
+
+	if _, err := tempFile.WriteString(normalizedJSONBody); err != nil {
+		tempFile.Close()
+		return nil, fmt.Errorf("failed to write temporary certificate payload file: %w", err)
+	}
+
+	if err := tempFile.Close(); err != nil {
+		return nil, fmt.Errorf("failed to close temporary certificate payload file: %w", err)
+	}
+
+	apiResponse, err := conn.ObjectStoresAPIInstance.CreateCertificate(
+		utils.StringPtr(objectStoreExtID),
+		utils.StringPtr(tempFile.Name()),
+		args,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return apiResponse, nil
+}
+
+func normalizeObjectStoreCertificateJSONBody(jsonBody string) (string, error) {
+	requestBody := config.NewCertificate()
+	if err := json.Unmarshal([]byte(jsonBody), requestBody); err != nil {
+		return "", err
+	}
+
+	normalizedJSONBody, err := json.Marshal(requestBody)
+	if err != nil {
+		return "", err
+	}
+
+	return string(normalizedJSONBody), nil
+}
+
+// expandFQDNs expands the FQDNs from the schema into the API model
+func expandFqdn(fqdnList interface{}) []objectsCommon.FQDN {
+	if fqdnList == nil {
+		return nil
+	}
+	fqdnListSchema := fqdnList.([]interface{})
+	fqdnListAPI := make([]objectsCommon.FQDN, 0, len(fqdnListSchema))
+	for _, fqdn := range fqdnListSchema {
+		fqdnMap := fqdn.(map[string]interface{})
+		fqdnAPI := objectsCommon.FQDN{
+			Value: utils.StringPtr(fqdnMap["value"].(string)),
+		}
+		fqdnListAPI = append(fqdnListAPI, fqdnAPI)
+	}
+	return fqdnListAPI
+}
 // flattenFQDNs flattens the FQDNs from the API model into the schema
 func flattenFQDNs(fQDN []objectsCommon.FQDN) []map[string]interface{} {
 	if len(fQDN) == 0 {

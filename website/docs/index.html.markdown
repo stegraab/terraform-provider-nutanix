@@ -92,6 +92,7 @@ Customers not taking advantage of the  Advanced API/SDK Support Program will con
 | nutanix_subnet | nutanix_subnet_v2 |
 | nutanix_vpc | nutanix_vpc_v2 |
 | nutanix_floating_ip | nutanix_floating_ip_v2 |
+| - | nutanix_nlb_v2 |
 | nutanix_pbr | nutanix_pbr_v2 |
 | nutanix_static_routes | nutanix_routes_v2 |
 | nutanix_address_group | nutanix_address_groups_v2 |
@@ -191,6 +192,7 @@ Customers not taking advantage of the  Advanced API/SDK Support Program will con
 | - | nutanix_user_key_revoke_v2 |
 | - | nutanix_object_store_v2 |
 | - | nutanix_object_store_certificate_v2 |
+| - | nutanix_file_server_v2 |
 | - | nutanix_password_change_request_v2 |
 | - | nutanix_key_management_server_v2 |
 | - | nutanix_ssl_certificate_v2 |
@@ -484,4 +486,3 @@ Going from 1.8.0-beta release of nutanix provider, fields inside provider config
 * `Prism Central & Karbon` : For prism central and karbon related resources and data sources, `username`, `password` & `endpoint` are manadatory.
 * `Foundation` : For foundation related resources and data sources, `foundation_endpoint` in manadatory.
 * `NDB` : For Nutanix Database Service (NDB) related resources and data sources. 
-

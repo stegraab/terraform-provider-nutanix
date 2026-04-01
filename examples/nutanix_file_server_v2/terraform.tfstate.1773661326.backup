@@ -1,0 +1,82 @@
+{
+  "version": 4,
+  "terraform_version": "1.14.5",
+  "serial": 3,
+  "lineage": "a8de0807-c350-4e38-e4c1-58df4942f75a",
+  "outputs": {
+    "file_server_ext_id": {
+      "value": "27328723-e4e0-47df-6d30-c7520ff9896c",
+      "type": "string"
+    }
+  },
+  "resources": [
+    {
+      "mode": "managed",
+      "type": "nutanix_file_server_v2",
+      "name": "example",
+      "provider": "provider[\"registry.terraform.io/nutanix/nutanix\"]",
+      "instances": [
+        {
+          "schema_version": 0,
+          "attributes": {
+            "cluster_ext_id": "000640b4-380a-586c-2558-7c8c0932c180",
+            "cvm_ip_addresses": [
+              {
+                "value": "10.112.1.101"
+              },
+              {
+                "value": "10.112.1.102"
+              },
+              {
+                "value": "10.112.1.103"
+              },
+              {
+                "value": "10.112.1.104"
+              }
+            ],
+            "deployment_status": "",
+            "dns_domain_name": "se-bod.stegra.tech",
+            "dns_servers": [
+              {
+                "value": "10.66.0.164"
+              },
+              {
+                "value": "10.66.0.87"
+              }
+            ],
+            "ext_id": "27328723-e4e0-47df-6d30-c7520ff9896c",
+            "external_networks": [
+              {
+                "is_managed": true,
+                "network_ext_id": "6eefcf43-8eaf-4047-85de-70881380fdb7"
+              }
+            ],
+            "id": "27328723-e4e0-47df-6d30-c7520ff9896c",
+            "internal_networks": [
+              {
+                "is_managed": true,
+                "network_ext_id": "6eefcf43-8eaf-4047-85de-70881380fdb7"
+              }
+            ],
+            "memory_gib": 12,
+            "name": "my-file-srv-2",
+            "ntp_servers": [
+              {
+                "fqdn": "time.google.com"
+              }
+            ],
+            "nvms_count": 3,
+            "size_in_gib": 1024,
+            "timeouts": null,
+            "vcpus": 4,
+            "version": "5.2"
+          },
+          "sensitive_attributes": [],
+          "identity_schema_version": 0,
+          "private": "eyJlMmJmYjczMC1lY2FhLTExZTYtOGY4OC0zNDM2M2JjN2M0YzAiOnsiY3JlYXRlIjo3MjAwMDAwMDAwMDAwLCJkZWxldGUiOjcyMDAwMDAwMDAwMDB9fQ=="
+        }
+      ]
+    }
+  ],
+  "check_results": null
+}

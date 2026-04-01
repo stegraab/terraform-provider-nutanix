@@ -2,6 +2,7 @@ package networkingv2
 
 import (
 	"context"
+	"sort"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
@@ -896,9 +897,15 @@ func flattenDhcpOptions(pr *import1.DhcpOptions) []interface{} {
 
 func flattenNtpServer(pr []config.IPAddress) []map[string]interface{} {
 	if len(pr) > 0 {
-		ips := make([]map[string]interface{}, len(pr))
+		// API does not guarantee order; sort to keep Terraform state stable.
+		sorted := append([]config.IPAddress(nil), pr...)
+		sort.SliceStable(sorted, func(i, j int) bool {
+			return ipAddressSortKey(sorted[i]) < ipAddressSortKey(sorted[j])
+		})
 
-		for k, v := range pr {
+		ips := make([]map[string]interface{}, len(sorted))
+
+		for k, v := range sorted {
 			ip := make(map[string]interface{})
 
 			ip["ipv4"] = flattenIPv4(v.Ipv4)
@@ -909,6 +916,18 @@ func flattenNtpServer(pr []config.IPAddress) []map[string]interface{} {
 		return ips
 	}
 	return nil
+}
+
+func ipAddressSortKey(pr config.IPAddress) string {
+	var ipv4, ipv6 string
+	if pr.Ipv4 != nil && pr.Ipv4.Value != nil {
+		ipv4 = utils.StringValue(pr.Ipv4.Value)
+	}
+	if pr.Ipv6 != nil && pr.Ipv6.Value != nil {
+		ipv6 = utils.StringValue(pr.Ipv6.Value)
+	}
+	// Prefix ensures IPv4 and IPv6 do not collide in sort key space.
+	return "v4:" + ipv4 + "|v6:" + ipv6
 }
 
 func flattenIPv4(pr *config.IPv4Address) []interface{} {
