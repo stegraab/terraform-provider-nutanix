@@ -34,7 +34,7 @@ If you are upgrading to a newer upstream release, rebase onto that newer tag ins
 git push --force-with-lease origin main
 ```
 
-Then trigger the manual `Manual Release` workflow in GitHub Actions to create the next `-stegra-N` tag and release.
+Then trigger the manual `Manual Release` workflow in GitHub Actions to create the next `-stegra.N` tag and release.
 
 ---
 
