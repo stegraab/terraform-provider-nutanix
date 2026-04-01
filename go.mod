@@ -14,6 +14,7 @@ require (
 	github.com/nutanix/ntnx-api-golang-clients/clustermgmt-go-client/v4 v4.2.2
 	github.com/nutanix/ntnx-api-golang-clients/datapolicies-go-client/v4 v4.2.2
 	github.com/nutanix/ntnx-api-golang-clients/dataprotection-go-client/v4 v4.3.1
+	github.com/nutanix/ntnx-api-golang-clients/files-go-client/v4 v4.0.1
 	github.com/nutanix/ntnx-api-golang-clients/iam-go-client/v4 v4.1.2-beta.2
 	github.com/nutanix/ntnx-api-golang-clients/lifecycle-go-client/v4 v4.2.2
 	github.com/nutanix/ntnx-api-golang-clients/microseg-go-client/v4 v4.2.2

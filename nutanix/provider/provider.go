@@ -16,6 +16,7 @@ import (
 	"github.com/terraform-providers/terraform-provider-nutanix/nutanix/services/clustersv2"
 	"github.com/terraform-providers/terraform-provider-nutanix/nutanix/services/datapoliciesv2"
 	"github.com/terraform-providers/terraform-provider-nutanix/nutanix/services/dataprotectionv2"
+	"github.com/terraform-providers/terraform-provider-nutanix/nutanix/services/filesv4"
 	"github.com/terraform-providers/terraform-provider-nutanix/nutanix/services/foundation"
 	foundationCentral "github.com/terraform-providers/terraform-provider-nutanix/nutanix/services/foundationCentral"
 	"github.com/terraform-providers/terraform-provider-nutanix/nutanix/services/iam"
@@ -437,6 +438,7 @@ func Provider() *schema.Provider {
 			"nutanix_network_function_v2":                     networkingv2.ResourceNutanixNetworkFunctionV2(),
 			"nutanix_service_groups_v2":                       networkingv2.ResourceNutanixServiceGroupsV2(),
 			"nutanix_address_groups_v2":                       networkingv2.ResourceNutanixAddressGroupsV2(),
+			"nutanix_nlb_v2":                                  networkingv2.ResourceNutanixNLBV2(),
 			"nutanix_directory_services_v2":                   iamv2.ResourceNutanixDirectoryServicesV2(),
 			"nutanix_user_groups_v2":                          iamv2.ResourceNutanixUserGroupsV2(),
 			"nutanix_roles_v2":                                iamv2.ResourceNutanixRolesV2(),
@@ -498,7 +500,10 @@ func Provider() *schema.Provider {
 			"nutanix_lcm_upgrade_v2":                          lcmv2.ResourceLcmUpgradeV2(),
 			"nutanix_lcm_config_v2":                           lcmv2.ResourceNutanixLcmConfigV2(),
 			"nutanix_object_store_v2":                         objectstoresv2.ResourceNutanixObjectStoresV2(),
+			"nutanix_bucket":                                  objectstoresv2.ResourceNutanixBucket(),
+			"nutanix_bucket_policy":                           objectstoresv2.ResourceNutanixBucketPolicy(),
 			"nutanix_object_store_certificate_v2":             objectstoresv2.ResourceNutanixObjectStoreCertificateV2(),
+			"nutanix_file_server_v2":                          filesv4.ResourceNutanixFileServerV2(),
 			"nutanix_key_management_server_v2":                securityv2.ResourceNutanixKeyManagementServerV2(),
 			"nutanix_entity_group_v2":                         microsegv2.ResourceNutanixEntityGroupV2(),
 		},
