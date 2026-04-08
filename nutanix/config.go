@@ -129,7 +129,8 @@ func (c *Config) Client() (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	ObjectStoreClient, err := objectstores.NewObjectStoresClient(configCreds)
+	// Note: v3 client does not expose cookies; pass nil and rely on explicit auth/session
+	ObjectStoreClient, err := objectstores.NewObjectStoresClient(configCreds, nil)
 	if err != nil {
 		return nil, err
 	}
