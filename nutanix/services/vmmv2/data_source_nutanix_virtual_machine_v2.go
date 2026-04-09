@@ -2489,7 +2489,12 @@ func flattenIpv4Config(pr *config.Ipv4Config) []map[string]interface{} {
 		cfgList := make([]map[string]interface{}, 0)
 		cfg := make(map[string]interface{})
 
-		if pr.ShouldAssignIp != nil {
+		if pr.IpAddress != nil {
+			// Prism can echo a resolved static address while flipping ShouldAssignIp to false.
+			// The VM/NIC update APIs still require "assign IP" semantics for explicitly attached
+			// static IPv4 addresses, so normalize read state to the create/update contract.
+			cfg["should_assign_ip"] = true
+		} else if pr.ShouldAssignIp != nil {
 			cfg["should_assign_ip"] = pr.ShouldAssignIp
 		}
 		if pr.IpAddress != nil {
