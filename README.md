@@ -235,6 +235,7 @@ From foundation getting released in 1.5.0-beta, provider configuration will acco
 | - | nutanix_ova_vm_deploy_v2 |
 | - | nutanix_ova_download_v2 |
 | - | nutanix_vm_clone_v2 |
+| - | nutanix_vm_cdrom_v2 |
 | - | nutanix_vm_cdrom_insert_eject_v2 |
 | - | nutanix_vm_shutdown_action_v2 |
 | - | nutanix_vm_gc_update_v2 |
