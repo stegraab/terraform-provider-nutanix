@@ -23,7 +23,6 @@ func ResourceNutanixVmCdRomV2() *schema.Resource {
 	return &schema.Resource{
 		CreateContext: ResourceNutanixVmCdRomV2Create,
 		ReadContext:   ResourceNutanixVmCdRomV2Read,
-		UpdateContext: ResourceNutanixVmCdRomV2Update,
 		DeleteContext: ResourceNutanixVmCdRomV2Delete,
 		Importer: &schema.ResourceImporter{
 			StateContext: func(ctx context.Context, d *schema.ResourceData, meta interface{}) ([]*schema.ResourceData, error) {
@@ -204,6 +203,8 @@ func ResourceNutanixVmCdRomV2Create(ctx context.Context, d *schema.ResourceData,
 	if err != nil {
 		return diag.Errorf("error while reading vm : %v", err)
 	}
+	preCreateVM := readResp.Data.GetValue().(config.Vm)
+	preExistingCdRomIDs := existingCdRomIDs(preCreateVM.CdRoms)
 	args := make(map[string]interface{})
 	args["If-Match"] = getEtagHeader(readResp, conn)
 
@@ -243,7 +244,15 @@ func ResourceNutanixVmCdRomV2Create(ctx context.Context, d *schema.ResourceData,
 		}
 	}
 	if cdromExtID == "" {
-		return diag.Errorf("error while determining created CD-ROM id from task %s", utils.StringValue(taskUUID))
+		refreshResp, err := conn.VMAPIInstance.GetVmById(utils.StringPtr(vmExtID))
+		if err != nil {
+			return diag.Errorf("error while re-reading vm after cd-rom create task (%s): %v", utils.StringValue(taskUUID), err)
+		}
+		refreshVM := refreshResp.Data.GetValue().(config.Vm)
+		cdromExtID = findCreatedCdRomExtID(refreshVM.CdRoms, preExistingCdRomIDs, d.Get("disk_address").([]interface{}))
+		if cdromExtID == "" {
+			return diag.Errorf("error while determining created CD-ROM id from task %s or vm state", utils.StringValue(taskUUID))
+		}
 	}
 
 	if err := d.Set("ext_id", cdromExtID); err != nil {
@@ -286,10 +295,59 @@ func ResourceNutanixVmCdRomV2Read(ctx context.Context, d *schema.ResourceData, m
 	return nil
 }
 
-func ResourceNutanixVmCdRomV2Update(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
-	return ResourceNutanixVmCdRomV2Read(ctx, d, meta)
+func existingCdRomIDs(cdroms []config.CdRom) map[string]struct{} {
+	ids := make(map[string]struct{}, len(cdroms))
+	for _, cdrom := range cdroms {
+		if cdrom.ExtId != nil {
+			ids[utils.StringValue(cdrom.ExtId)] = struct{}{}
+		}
+	}
+	return ids
 }
 
+func findCreatedCdRomExtID(cdroms []config.CdRom, preExisting map[string]struct{}, requestedDiskAddress []interface{}) string {
+	for _, cdrom := range cdroms {
+		if cdrom.ExtId == nil {
+			continue
+		}
+		extID := utils.StringValue(cdrom.ExtId)
+		if _, ok := preExisting[extID]; ok {
+			continue
+		}
+		if requestedDiskAddress == nil || len(requestedDiskAddress) == 0 {
+			return extID
+		}
+		if cdRomAddressMatches(cdrom.DiskAddress, requestedDiskAddress) {
+			return extID
+		}
+	}
+	return ""
+}
+
+func cdRomAddressMatches(actual *config.CdRomAddress, requested []interface{}) bool {
+	if actual == nil || len(requested) == 0 || requested[0] == nil {
+		return false
+	}
+	requestMap, ok := requested[0].(map[string]interface{})
+	if !ok {
+		return false
+	}
+
+	if requestedBus, ok := requestMap["bus_type"].(string); ok && requestedBus != "" {
+		actualBus := flattenCdRomBusType(actual.BusType)
+		if actualBus != requestedBus {
+			return false
+		}
+	}
+
+	if requestedIndex, ok := requestMap["index"].(int); ok {
+		if actual.Index == nil || int(*actual.Index) != requestedIndex {
+			return false
+		}
+	}
+
+	return true
+}
 func ResourceNutanixVmCdRomV2Delete(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
 	log.Printf("[DEBUG] ResourceNutanixVmCdRomV2Delete : Deleting CD-ROM %s from VM %s", d.Get("ext_id").(string), d.Get("vm_ext_id").(string))
 	conn := meta.(*conns.Client).VmmAPI
