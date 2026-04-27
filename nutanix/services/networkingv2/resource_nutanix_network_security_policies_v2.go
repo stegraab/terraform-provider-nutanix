@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
@@ -683,8 +684,12 @@ func ResourceNutanixNetworkSecurityPolicyV2Read(ctx context.Context, d *schema.R
 				return diag.FromErr(err)
 			}
 		} else {
-			// if operations are same, do not update local operations
-			log.Printf("[DEBUG] Rules are same. Not updating local rules")
+			// Preserve local rule ordering, but fill schema defaults that are omitted
+			// from state when the API leaves the corresponding enum fields unset.
+			log.Printf("[DEBUG] Rules are same. Normalizing local rules with schema defaults")
+			if err := d.Set("rules", normalizeNetworkSecurityPolicyRuleDefaults(d.Get("rules").([]interface{}))); err != nil {
+				return diag.FromErr(err)
+			}
 		}
 	}
 
@@ -851,6 +856,99 @@ func expandNetworkSecurityPolicyRule(pr []interface{}) []import1.NetworkSecurity
 		return nets
 	}
 	return nil
+}
+
+func normalizeNetworkSecurityPolicyRuleDefaults(pr []interface{}) []interface{} {
+	if len(pr) == 0 {
+		return pr
+	}
+
+	rules := make([]interface{}, 0, len(pr))
+	for _, item := range pr {
+		rule, ok := item.(map[string]interface{})
+		if !ok {
+			rules = append(rules, item)
+			continue
+		}
+
+		ruleCopy := make(map[string]interface{}, len(rule))
+		for key, value := range rule {
+			ruleCopy[key] = value
+		}
+
+		specs, ok := rule["spec"].([]interface{})
+		if ok && len(specs) > 0 {
+			ruleCopy["spec"] = normalizeNetworkSecurityPolicyRuleSpecs(specs)
+		}
+
+		rules = append(rules, ruleCopy)
+	}
+
+	return rules
+}
+
+func normalizeNetworkSecurityPolicyRuleSpecs(pr []interface{}) []interface{} {
+	specs := make([]interface{}, 0, len(pr))
+
+	for _, item := range pr {
+		spec, ok := item.(map[string]interface{})
+		if !ok {
+			specs = append(specs, item)
+			continue
+		}
+
+		specCopy := make(map[string]interface{}, len(spec))
+		for key, value := range spec {
+			specCopy[key] = value
+		}
+
+		appRules, ok := spec["application_rule_spec"].([]interface{})
+		if ok && len(appRules) > 0 {
+			specCopy["application_rule_spec"] = normalizeApplicationRuleDefaults(appRules)
+		}
+
+		specs = append(specs, specCopy)
+	}
+
+	return specs
+}
+
+func normalizeApplicationRuleDefaults(pr []interface{}) []interface{} {
+	appRules := make([]interface{}, 0, len(pr))
+
+	for _, item := range pr {
+		appRule, ok := item.(map[string]interface{})
+		if !ok {
+			appRules = append(appRules, item)
+			continue
+		}
+
+		appRuleCopy := make(map[string]interface{}, len(appRule))
+		for key, value := range appRule {
+			appRuleCopy[key] = value
+		}
+
+		applyDefaultString(appRuleCopy, "secured_group_category_associated_entity_type", "VM")
+		applyDefaultString(appRuleCopy, "src_category_associated_entity_type", "VM")
+		applyDefaultString(appRuleCopy, "dest_category_associated_entity_type", "VM")
+
+		appRules = append(appRules, appRuleCopy)
+	}
+
+	return appRules
+}
+
+func applyDefaultString(target map[string]interface{}, key string, fallback string) {
+	value, ok := target[key]
+	if !ok {
+		target[key] = fallback
+		return
+	}
+
+	stringValue, ok := value.(string)
+	if !ok || strings.TrimSpace(stringValue) == "" {
+		target[key] = fallback
+	}
 }
 
 func expandOneOfNetworkSecurityPolicyRuleSpec(pr interface{}) *import1.OneOfNetworkSecurityPolicyRuleSpec {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
@@ -13,6 +14,15 @@ import (
 	"github.com/terraform-providers/terraform-provider-nutanix/nutanix/common"
 	"github.com/terraform-providers/terraform-provider-nutanix/utils"
 )
+
+func flattenPtrEnumWithDefault[T interface{ GetName() string }](value *T, fallback string) string {
+	flattened := strings.TrimSpace(common.FlattenPtrEnum(value))
+	if flattened == "" {
+		return fallback
+	}
+
+	return flattened
+}
 
 func DataSourceNutanixNetworkSecurityPolicyV2() *schema.Resource {
 	return &schema.Resource{
@@ -620,9 +630,7 @@ func flattenOneOfNetworkSecurityPolicyRuleSpec(pr *import1.OneOfNetworkSecurityP
 
 			appRuleValue := pr.GetValue().(import1.ApplicationRuleSpec)
 
-			if appRuleValue.SecuredGroupCategoryAssociatedEntityType != nil {
-				app["secured_group_category_associated_entity_type"] = common.FlattenPtrEnum(appRuleValue.SecuredGroupCategoryAssociatedEntityType)
-			}
+			app["secured_group_category_associated_entity_type"] = flattenPtrEnumWithDefault(appRuleValue.SecuredGroupCategoryAssociatedEntityType, "VM")
 			if appRuleValue.SecuredGroupCategoryReferences != nil {
 				app["secured_group_category_references"] = appRuleValue.SecuredGroupCategoryReferences
 			}
@@ -635,18 +643,14 @@ func flattenOneOfNetworkSecurityPolicyRuleSpec(pr *import1.OneOfNetworkSecurityP
 			if appRuleValue.DestAllowSpec != nil {
 				app["dest_allow_spec"] = common.FlattenPtrEnum(appRuleValue.DestAllowSpec)
 			}
-			if appRuleValue.SrcCategoryAssociatedEntityType != nil {
-				app["src_category_associated_entity_type"] = common.FlattenPtrEnum(appRuleValue.SrcCategoryAssociatedEntityType)
-			}
+			app["src_category_associated_entity_type"] = flattenPtrEnumWithDefault(appRuleValue.SrcCategoryAssociatedEntityType, "VM")
 			if appRuleValue.SrcCategoryReferences != nil {
 				app["src_category_references"] = appRuleValue.SrcCategoryReferences
 			}
 			if appRuleValue.SrcEntityGroupReference != nil {
 				app["src_entity_group_reference"] = utils.StringValue(appRuleValue.SrcEntityGroupReference)
 			}
-			if appRuleValue.DestCategoryAssociatedEntityType != nil {
-				app["dest_category_associated_entity_type"] = common.FlattenPtrEnum(appRuleValue.DestCategoryAssociatedEntityType)
-			}
+			app["dest_category_associated_entity_type"] = flattenPtrEnumWithDefault(appRuleValue.DestCategoryAssociatedEntityType, "VM")
 			if appRuleValue.DestCategoryReferences != nil {
 				app["dest_category_references"] = appRuleValue.DestCategoryReferences
 			}
