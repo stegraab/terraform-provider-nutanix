@@ -38,7 +38,6 @@ Then trigger the manual `Manual Release` workflow in GitHub Actions to create th
 
 ---
 
-NOTE: The latest version of the Nutanix provider is [v2.4.0](https://github.com/nutanix/terraform-provider-nutanix/releases/tag/v2.4.0).
 NOTE: The latest version of the Nutanix provider is [v2.4.2](https://github.com/nutanix/terraform-provider-nutanix/releases/tag/v2.4.2).
 
 Modules based on Terraform Nutanix Provider can be found here : [Modules](https://github.com/nutanix/terraform-provider-nutanix/tree/master/modules)
