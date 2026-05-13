@@ -177,3 +177,14 @@ func ApplyDiskAdditions(ctx context.Context, d *schema.ResourceData, meta interf
 	}
 	return nil
 }
+
+func isNgtInstallTransientErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "no IP address assigned to the VM") ||
+		strings.Contains(msg, "failed to establish secure connection with the UVM") ||
+		strings.Contains(msg, "Failed to perform the operation due to an internal error") ||
+		strings.Contains(msg, "context deadline exceeded")
+}
