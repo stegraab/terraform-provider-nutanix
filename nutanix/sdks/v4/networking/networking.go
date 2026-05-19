@@ -17,6 +17,8 @@ type Client struct {
 	VpcAPIInstance                  *api.VpcsApi
 	FloatingIPAPIInstance           *api.FloatingIpsApi
 	LoadBalancerSessionsAPIInstance *api.LoadBalancerSessionsApi
+	GatewaysAPIInstance             *api.GatewaysApi
+	BgpSessionsAPIInstance          *api.BgpSessionsApi
 }
 
 func NewNetworkingClient(credentials client.Credentials) (*Client, error) {
@@ -43,5 +45,7 @@ func NewNetworkingClient(credentials client.Credentials) (*Client, error) {
 		VpcAPIInstance:                  api.NewVpcsApi(baseClient),
 		FloatingIPAPIInstance:           api.NewFloatingIpsApi(baseClient),
 		LoadBalancerSessionsAPIInstance: api.NewLoadBalancerSessionsApi(baseClient),
+		GatewaysAPIInstance:             api.NewGatewaysApi(baseClient),
+		BgpSessionsAPIInstance:          api.NewBgpSessionsApi(baseClient),
 	}, nil
 }
