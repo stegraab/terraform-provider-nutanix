@@ -38,9 +38,13 @@ func ResourceNutanixGatewayV2() *schema.Resource {
 			},
 			"remote_bgp_service": {
 				Type:     schema.TypeList,
-				Required: true,
+				Optional: true,
 				ForceNew: true,
 				MaxItems: 1,
+				ExactlyOneOf: []string{
+					"remote_bgp_service",
+					"local_bgp_service",
+				},
 				Elem: &schema.Resource{
 					Schema: map[string]*schema.Schema{
 						"address": {
@@ -57,6 +61,36 @@ func ResourceNutanixGatewayV2() *schema.Resource {
 						"asn": {
 							Type:     schema.TypeInt,
 							Required: true,
+							ForceNew: true,
+						},
+					},
+				},
+			},
+			"local_bgp_service": {
+				Type:     schema.TypeList,
+				Optional: true,
+				ForceNew: true,
+				MaxItems: 1,
+				ExactlyOneOf: []string{
+					"remote_bgp_service",
+					"local_bgp_service",
+				},
+				Elem: &schema.Resource{
+					Schema: map[string]*schema.Schema{
+						"vpc_reference": {
+							Type:     schema.TypeString,
+							Required: true,
+							ForceNew: true,
+						},
+						"asn": {
+							Type:     schema.TypeInt,
+							Required: true,
+							ForceNew: true,
+						},
+						"is_bgp_add_path_enabled": {
+							Type:     schema.TypeBool,
+							Optional: true,
+							Default:  false,
 							ForceNew: true,
 						},
 					},
@@ -123,6 +157,11 @@ func resourceNutanixGatewayV2Read(ctx context.Context, d *schema.ResourceData, m
 	_ = d.Set("tenant_id", utils.StringValue(gateway.TenantId))
 	if services, ok := gateway.GetServices().(config.RemoteNetworkServices); ok && services.RemoteBgpService != nil {
 		_ = d.Set("remote_bgp_service", flattenRemoteBgpService(services.RemoteBgpService))
+		_ = d.Set("local_bgp_service", []interface{}{})
+	}
+	if services, ok := gateway.GetServices().(config.LocalNetworkServices); ok && services.LocalBgpService != nil {
+		_ = d.Set("local_bgp_service", flattenLocalBgpService(services.LocalBgpService))
+		_ = d.Set("remote_bgp_service", []interface{}{})
 	}
 	return nil
 }
@@ -152,9 +191,16 @@ func resourceNutanixGatewayV2Delete(ctx context.Context, d *schema.ResourceData,
 func expandGateway(d *schema.ResourceData) *config.Gateway {
 	gateway := config.NewGateway()
 	gateway.Name = utils.StringPtr(d.Get("name").(string))
-	services := config.NewRemoteNetworkServices()
-	services.RemoteBgpService = expandRemoteBgpService(d.Get("remote_bgp_service").([]interface{}))
-	_ = gateway.SetServices(*services)
+	if raw, ok := d.GetOk("remote_bgp_service"); ok && len(raw.([]interface{})) > 0 {
+		services := config.NewRemoteNetworkServices()
+		services.RemoteBgpService = expandRemoteBgpService(raw.([]interface{}))
+		_ = gateway.SetServices(*services)
+	}
+	if raw, ok := d.GetOk("local_bgp_service"); ok && len(raw.([]interface{})) > 0 {
+		services := config.NewLocalNetworkServices()
+		services.LocalBgpService = expandLocalBgpService(raw.([]interface{}))
+		_ = gateway.SetServices(*services)
+	}
 	return gateway
 }
 
@@ -173,6 +219,24 @@ func flattenRemoteBgpService(service *config.RemoteBgpService) []interface{} {
 	if service.Address != nil && service.Address.Ipv4 != nil {
 		result["address"] = utils.StringValue(service.Address.Ipv4.Value)
 		result["prefix_length"] = utils.IntValue(service.Address.Ipv4.PrefixLength)
+	}
+	return []interface{}{result}
+}
+
+func expandLocalBgpService(raw []interface{}) *config.LocalBgpService {
+	service := config.NewLocalBgpService()
+	values := raw[0].(map[string]interface{})
+	service.VpcReference = utils.StringPtr(values["vpc_reference"].(string))
+	service.Asn = utils.Int64Ptr(int64(values["asn"].(int)))
+	service.IsBgpAddPathEnabled = utils.BoolPtr(values["is_bgp_add_path_enabled"].(bool))
+	return service
+}
+
+func flattenLocalBgpService(service *config.LocalBgpService) []interface{} {
+	result := map[string]interface{}{
+		"asn":                     utils.Int64Value(service.Asn),
+		"vpc_reference":           utils.StringValue(service.VpcReference),
+		"is_bgp_add_path_enabled": utils.BoolValue(service.IsBgpAddPathEnabled),
 	}
 	return []interface{}{result}
 }

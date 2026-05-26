@@ -48,6 +48,26 @@ func DataSourceNutanixGatewayV2() *schema.Resource {
 					},
 				},
 			},
+			"local_bgp_service": {
+				Type:     schema.TypeList,
+				Computed: true,
+				Elem: &schema.Resource{
+					Schema: map[string]*schema.Schema{
+						"vpc_reference": {
+							Type:     schema.TypeString,
+							Computed: true,
+						},
+						"asn": {
+							Type:     schema.TypeInt,
+							Computed: true,
+						},
+						"is_bgp_add_path_enabled": {
+							Type:     schema.TypeBool,
+							Computed: true,
+						},
+					},
+				},
+			},
 			"tenant_id": {
 				Type:     schema.TypeString,
 				Computed: true,
@@ -87,6 +107,11 @@ func dataSourceNutanixGatewayV2Read(ctx context.Context, d *schema.ResourceData,
 	_ = d.Set("tenant_id", utils.StringValue(gateway.TenantId))
 	if services, ok := gateway.GetServices().(config.RemoteNetworkServices); ok && services.RemoteBgpService != nil {
 		_ = d.Set("remote_bgp_service", flattenRemoteBgpService(services.RemoteBgpService))
+		_ = d.Set("local_bgp_service", []interface{}{})
+	}
+	if services, ok := gateway.GetServices().(config.LocalNetworkServices); ok && services.LocalBgpService != nil {
+		_ = d.Set("local_bgp_service", flattenLocalBgpService(services.LocalBgpService))
+		_ = d.Set("remote_bgp_service", []interface{}{})
 	}
 	return nil
 }
