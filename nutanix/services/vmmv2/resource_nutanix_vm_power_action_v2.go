@@ -82,5 +82,18 @@ func ResourceNutanixVMPowerActionV2Read(ctx context.Context, d *schema.ResourceD
 }
 
 func ResourceNutanixVMPowerActionV2Delete(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+	switch d.Get("action").(string) {
+	case "power_on":
+		if diagErr := callForPowerOffVM(ctx, meta.(*conns.Client).VmmAPI, d, meta); diagErr != nil {
+			return diagErr
+		}
+	case "power_off":
+		if diagErr := callForPowerOnVM(ctx, meta.(*conns.Client).VmmAPI, d, meta); diagErr != nil {
+			return diagErr
+		}
+	default:
+		return diag.Errorf("unsupported VM power action %q", d.Get("action").(string))
+	}
+
 	return nil
 }
