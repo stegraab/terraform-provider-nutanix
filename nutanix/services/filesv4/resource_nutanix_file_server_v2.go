@@ -16,12 +16,13 @@ import (
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
-	filesClient "github.com/nutanix/ntnx-api-golang-clients/files-go-client/v4/client"
 	conns "github.com/terraform-providers/terraform-provider-nutanix/nutanix"
+	filesClient "github.com/terraform-providers/terraform-provider-nutanix/nutanix/sdks/v4/files"
 )
 
 const filesAPIBasePath = "/api/files/v4.0.a6/config/file-servers"
 const filesDirectoryServicesPathTemplate = "/api/files/v4.0/config/file-servers/%s/directory-services"
+const filesConfigureNameServicesPathTemplate = "/api/files/v4.0.a6/config/file-servers/%s/$actions/configure-name-services"
 
 func ResourceNutanixFileServerV2() *schema.Resource {
 	return &schema.Resource{
@@ -168,6 +169,13 @@ func ResourceNutanixFileServerV2() *schema.Resource {
 			"deployment_status": {
 				Type:     schema.TypeString,
 				Computed: true,
+			},
+			"external_ip_addresses": {
+				Type:     schema.TypeList,
+				Computed: true,
+				Elem: &schema.Schema{
+					Type: schema.TypeString,
+				},
 			},
 			"directory_service": {
 				Type:     schema.TypeList,
@@ -324,7 +332,17 @@ func resourceNutanixFileServerV2Delete(ctx context.Context, d *schema.ResourceDa
 		return diag.Errorf("files api client is not initialized")
 	}
 
-	respBody, statusCode, err := filesRequest(apiClient, http.MethodDelete, filesAPIBasePath+"/"+d.Id(), nil)
+	_, _, headers, err := filesRequestWithHeaders(apiClient, http.MethodGet, filesAPIBasePath+"/"+d.Id(), nil, nil)
+	if err != nil {
+		return diag.Errorf("error while reading file server %q before delete: %v", d.Id(), err)
+	}
+
+	deleteHeaders := map[string]string{}
+	if etag := headers.Get("Etag"); etag != "" {
+		deleteHeaders["If-Match"] = etag
+	}
+
+	respBody, statusCode, _, err := filesRequestWithHeaders(apiClient, http.MethodDelete, filesAPIBasePath+"/"+d.Id(), nil, deleteHeaders)
 	if err != nil {
 		return diag.Errorf("error while deleting file server %q: %v", d.Id(), err)
 	}
@@ -432,6 +450,7 @@ func flattenFileServerToState(d *schema.ResourceData, item map[string]interface{
 	_ = d.Set("external_networks", flattenNetworks(item["externalNetworks"]))
 	_ = d.Set("internal_networks", flattenNetworks(item["internalNetworks"]))
 	_ = d.Set("deployment_status", stringValue(item["deploymentStatus"]))
+	_ = d.Set("external_ip_addresses", flattenNetworkIPAddresses(item["externalNetworks"]))
 }
 
 func flattenValueList(raw interface{}) []map[string]interface{} {
@@ -490,6 +509,40 @@ func flattenNetworks(raw interface{}) []map[string]interface{} {
 			"network_ext_id": stringValue(v["networkExtId"]),
 		})
 	}
+	return result
+}
+
+func flattenNetworkIPAddresses(raw interface{}) []string {
+	list, ok := raw.([]interface{})
+	if !ok {
+		return nil
+	}
+
+	var result []string
+	for _, entry := range list {
+		network, ok := entry.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		addresses, ok := network["ipAddresses"].([]interface{})
+		if !ok {
+			continue
+		}
+		for _, address := range addresses {
+			ip, ok := address.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			ipv4, ok := ip["ipv4"].(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if value := stringValue(ipv4["value"]); value != "" {
+				result = append(result, value)
+			}
+		}
+	}
+	sort.Strings(result)
 	return result
 }
 
@@ -569,12 +622,12 @@ func refreshDirectoryServiceState(d *schema.ResourceData, apiClient *filesClient
 		return err
 	}
 	if notFound || ds == nil {
-		return nil
+		return d.Set("directory_service", []interface{}{})
 	}
 
 	flattened := flattenDirectoryService(ds)
 	if len(flattened) == 0 {
-		return nil
+		return d.Set("directory_service", []interface{}{})
 	}
 	return d.Set("directory_service", flattened)
 }
@@ -630,12 +683,16 @@ func updateDirectoryService(apiClient *filesClient.ApiClient, fileServerExtID st
 		return err
 	}
 	if notFound || current == nil {
-		return fmt.Errorf("directory service configuration for file server %q was not found", fileServerExtID)
+		return configureDirectoryService(apiClient, fileServerExtID, values)
 	}
 
 	dsExtID := stringValue(current["extId"])
 	if dsExtID == "" {
 		return fmt.Errorf("directory service extId missing in current configuration")
+	}
+
+	if len(values) == 0 || values[0] == nil {
+		return unconfigureDirectoryService(apiClient, fileServerExtID, current, etag)
 	}
 
 	payload, err := buildDirectoryServicePayload(values)
@@ -657,6 +714,77 @@ func updateDirectoryService(apiClient *filesClient.ApiClient, fileServerExtID st
 		return fmt.Errorf("%s", filesErrorMessage(respBody, statusCode))
 	}
 	return nil
+}
+
+func configureDirectoryService(apiClient *filesClient.ApiClient, fileServerExtID string, values []interface{}) error {
+	if len(values) == 0 || values[0] == nil {
+		return nil
+	}
+
+	payload, err := buildDirectoryServiceActionPayload(values)
+	if err != nil {
+		return err
+	}
+
+	path := fmt.Sprintf(filesConfigureNameServicesPathTemplate, fileServerExtID)
+	respBody, statusCode, _, err := filesRequestWithHeaders(apiClient, http.MethodPost, path, payload, nil)
+	if err != nil {
+		return err
+	}
+	if statusCode >= http.StatusBadRequest || filesHasError(respBody) {
+		return fmt.Errorf("%s", filesErrorMessage(respBody, statusCode))
+	}
+	return nil
+}
+
+func unconfigureDirectoryService(apiClient *filesClient.ApiClient, fileServerExtID string, current map[string]interface{}, etag string) error {
+	if _, hasLDAP := current["ldapDomain"].(map[string]interface{}); !hasLDAP && localDomainProtocol(current["localDomain"]) == "NFS" {
+		return nil
+	}
+
+	nfsVersion := stringValue(current["nfsVersion"])
+	if nfsVersion == "" {
+		nfsVersion = "NFSV3V4"
+	}
+
+	payload := map[string]interface{}{
+		"ldapDomain": map[string]interface{}{
+			"protocolType": "NONE",
+		},
+		"localDomain": map[string]interface{}{
+			"protocolType": "NFS",
+		},
+		"nfsVersion":  nfsVersion,
+		"$objectType": "files.v4.config.NameServiceSpec",
+	}
+	if nfsV4Domain := stringValue(current["nfsV4Domain"]); nfsV4Domain != "" {
+		payload["nfsV4Domain"] = nfsV4Domain
+	}
+
+	headers := map[string]string{}
+	if etag != "" {
+		headers["If-Match"] = etag
+	}
+
+	path := fmt.Sprintf(filesConfigureNameServicesPathTemplate, fileServerExtID)
+	respBody, statusCode, _, err := filesRequestWithHeaders(apiClient, http.MethodPost, path, payload, headers)
+	if err != nil {
+		return err
+	}
+	if statusCode >= http.StatusBadRequest || filesHasError(respBody) {
+		return fmt.Errorf("%s", filesErrorMessage(respBody, statusCode))
+	}
+	return nil
+}
+
+func localDomainProtocol(raw interface{}) string {
+	if value := stringValue(raw); value != "" {
+		return value
+	}
+	if value, ok := raw.(map[string]interface{}); ok {
+		return stringValue(value["protocolType"])
+	}
+	return ""
 }
 
 func buildDirectoryServicePayload(values []interface{}) (map[string]interface{}, error) {
@@ -714,13 +842,33 @@ func buildDirectoryServicePayload(values []interface{}) (map[string]interface{},
 	return payload, nil
 }
 
+func buildDirectoryServiceActionPayload(values []interface{}) (map[string]interface{}, error) {
+	payload, err := buildDirectoryServicePayload(values)
+	if err != nil {
+		return nil, err
+	}
+
+	if localDomain := stringValue(payload["localDomain"]); localDomain != "" {
+		payload["localDomain"] = map[string]interface{}{
+			"protocolType": localDomain,
+		}
+	}
+	if _, hasLDAP := payload["ldapDomain"]; !hasLDAP {
+		payload["ldapDomain"] = map[string]interface{}{
+			"protocolType": "NONE",
+		}
+	}
+	payload["$objectType"] = "files.v4.config.NameServiceSpec"
+	return payload, nil
+}
+
 func flattenDirectoryService(item map[string]interface{}) []map[string]interface{} {
 	if len(item) == 0 {
 		return nil
 	}
 
 	result := map[string]interface{}{}
-	localDomain := stringValue(item["localDomain"])
+	localDomain := localDomainProtocol(item["localDomain"])
 	if localDomain != "" {
 		result["local_domain"] = localDomain
 	}
@@ -849,6 +997,10 @@ func filesRequestWithHeaders(apiClient *filesClient.ApiClient, method, uri strin
 
 	var parsed map[string]interface{}
 	if err := json.Unmarshal(payload, &parsed); err != nil {
+		var text string
+		if stringErr := json.Unmarshal(payload, &text); stringErr == nil {
+			return map[string]interface{}{"error": text}, resp.StatusCode, resp.Header, nil
+		}
 		return nil, resp.StatusCode, resp.Header, fmt.Errorf("unable to parse response body: %w", err)
 	}
 	return parsed, resp.StatusCode, resp.Header, nil
@@ -918,6 +1070,9 @@ func filesErrorMessage(resp map[string]interface{}, statusCode int) string {
 
 	if len(msgs) > 0 {
 		return strings.Join(msgs, "; ")
+	}
+	if msg := stringValue(resp["error"]); msg != "" {
+		return msg
 	}
 	if statusCode > 0 {
 		return fmt.Sprintf("request failed with status code %d", statusCode)
