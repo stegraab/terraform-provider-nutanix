@@ -27,6 +27,11 @@ func ResourceNutanixNGTInstallationV2() *schema.Resource {
 		ReadContext:   ResourceNutanixNGTInstallationV4Read,
 		UpdateContext: ResourceNutanixNGTInstallationV4Update,
 		DeleteContext: ResourceNutanixNGTInstallationV4Delete,
+		Timeouts: &schema.ResourceTimeout{
+			Create: schema.DefaultTimeout(1 * time.Hour),
+			Update: schema.DefaultTimeout(1 * time.Hour),
+			Delete: schema.DefaultTimeout(1 * time.Hour),
+		},
 		Schema: map[string]*schema.Schema{
 			"ext_id": {
 				Type:     schema.TypeString,
@@ -172,16 +177,13 @@ func ResourceNutanixNGTInstallationV4Create(ctx context.Context, d *schema.Resou
 	log.Printf("[DEBUG] vmmExtId : %s", *vmmExtID)
 	body := &vmmConfig.GuestToolsInstallConfig{}
 
-	readResp, err := conn.VMAPIInstance.GetGuestToolsById(vmmExtID)
-	if err != nil {
-		return diag.Errorf("error while fetching Vm NGT Configuration : %v", err)
+	if isNgtInstallationComplete(d, meta, utils.StringValue(vmmExtID)) {
+		log.Printf("[DEBUG] NGT is already installed/enabled for VM %s", utils.StringValue(vmmExtID))
+		d.SetId(utils.StringValue(vmmExtID))
+		return ResourceNutanixNGTInstallationV4Read(ctx, d, meta)
 	}
 
-	//get the etag value
-	args := make(map[string]interface{})
-	args["If-Match"] = getEtagHeader(readResp, conn)
-
-	// prepare the body
+	// Prepare the body.
 	if capabilities, ok := d.GetOk("capablities"); ok && len(capabilities.([]interface{})) > 0 {
 		capabilitiesList := make([]vmmConfig.NgtCapability, 0)
 		const two, three = 2, 3
@@ -237,45 +239,67 @@ func ResourceNutanixNGTInstallationV4Create(ctx context.Context, d *schema.Resou
 
 	aJSON, _ := json.Marshal(body)
 	log.Printf("[DEBUG] Installing NGT Request Body: %s", aJSON)
-	installResp, err := conn.VMAPIInstance.InstallVmGuestTools(vmmExtID, body, args)
-	if err != nil {
-		return diag.Errorf("error while installing gest tools  : %v", err)
-	}
-
-	TaskRef := installResp.Data.GetValue().(vmmPrism.TaskReference)
-	taskUUID := TaskRef.ExtId
 
 	taskconn := meta.(*conns.Client).PrismAPI
-	// Wait for the NGT to be installed
-	stateConf := &resource.StateChangeConf{
-		Pending: []string{"PENDING", "RUNNING", "QUEUED"},
-		Target:  []string{"SUCCEEDED"},
-		Refresh: common.TaskStateRefreshPrismTaskGroupFunc(ctx, taskconn, utils.StringValue(taskUUID)),
-		Timeout: d.Timeout(schema.TimeoutCreate),
-	}
+	const maxInstallAttempts = 5
+	var taskUUID *string
+	var errWaitTask error
 
-	if _, errWaitTask := stateConf.WaitForStateContext(ctx); errWaitTask != nil {
+	for attempt := 1; attempt <= maxInstallAttempts; attempt++ {
+		readResp, err := conn.VMAPIInstance.GetGuestToolsById(vmmExtID)
+		if err != nil {
+			return diag.Errorf("error while fetching Vm NGT Configuration : %v", err)
+		}
+
+		args := make(map[string]interface{})
+		args["If-Match"] = getEtagHeader(readResp, conn)
+
+		installResp, err := conn.VMAPIInstance.InstallVmGuestTools(vmmExtID, body, args)
+		if err != nil {
+			if isNgtInstallationComplete(d, meta, utils.StringValue(vmmExtID)) {
+				log.Printf("[DEBUG] NGT install returned error, but VM %s already reports NGT installed/enabled: %v", utils.StringValue(vmmExtID), err)
+				d.SetId(utils.StringValue(vmmExtID))
+				return ResourceNutanixNGTInstallationV4Read(ctx, d, meta)
+			}
+			return diag.Errorf("error while installing gest tools  : %v", err)
+		}
+
+		TaskRef := installResp.Data.GetValue().(vmmPrism.TaskReference)
+		taskUUID = TaskRef.ExtId
+
+		stateConf := &resource.StateChangeConf{
+			Pending: []string{"PENDING", "RUNNING", "QUEUED"},
+			Target:  []string{"SUCCEEDED"},
+			Refresh: common.TaskStateRefreshPrismTaskGroupFunc(ctx, taskconn, utils.StringValue(taskUUID)),
+			Timeout: d.Timeout(schema.TimeoutCreate),
+		}
+
+		_, errWaitTask = stateConf.WaitForStateContext(ctx)
+		if errWaitTask == nil {
+			break
+		}
+
+		if isNgtInstallationComplete(d, meta, utils.StringValue(vmmExtID)) {
+			log.Printf("[DEBUG] NGT install task %s returned error, but VM %s reports NGT installed/enabled: %v",
+				utils.StringValue(taskUUID), utils.StringValue(vmmExtID), errWaitTask)
+			break
+		}
+
+		if attempt < maxInstallAttempts && isNgtInstallTransientErr(errWaitTask) {
+			log.Printf("[DEBUG] NGT install task %s failed with a transient error (attempt %d/%d). Retrying after guest state settles: %v",
+				utils.StringValue(taskUUID), attempt, maxInstallAttempts, errWaitTask)
+			time.Sleep(30 * time.Second)
+			continue
+		}
+
 		return diag.Errorf("error waiting for NGT installation (%s) to complete: %s", utils.StringValue(taskUUID), errWaitTask)
 	}
 
-	// Get UUID from TASK API
-	taskResp, err := taskconn.TaskRefAPI.GetTaskById(taskUUID, nil)
-	if err != nil {
-		return diag.Errorf("error while fetching NGT installation task (%s): %v", utils.StringValue(taskUUID), err)
-	}
-	taskDetails := taskResp.Data.GetValue().(taskPoll.Task)
+	d.SetId(utils.StringValue(vmmExtID))
 
-	aJSON, _ = json.MarshalIndent(taskDetails, "", " ")
-	log.Printf("[DEBUG] NGT Installation Task Details: %s", string(aJSON))
-
-	uuid, err := common.ExtractEntityUUIDFromTask(taskDetails, utils.RelEntityTypeVM, "VM")
-	if err != nil {
+	if err := waitForNgtInstallationReadiness(ctx, d, meta, utils.StringValue(vmmExtID)); err != nil {
 		return diag.FromErr(err)
 	}
-	d.SetId(utils.StringValue(uuid))
-
-	// Delay/sleep for 1 Minute
-	time.Sleep(1 * time.Minute)
 
 	return ResourceNutanixNGTInstallationV4Read(ctx, d, meta)
 }
@@ -284,7 +308,7 @@ func ResourceNutanixNGTInstallationV4Create(ctx context.Context, d *schema.Resou
 func ResourceNutanixNGTInstallationV4Read(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
 	conn := meta.(*conns.Client).VmmAPI
 
-	extID := d.Id()
+	extID := d.Get("ext_id").(string)
 	resp, err := conn.VMAPIInstance.GetGuestToolsById(utils.StringPtr(extID))
 	if err != nil {
 		return diag.Errorf("error while fetching Gest Tool : %v", err)
@@ -322,6 +346,54 @@ func ResourceNutanixNGTInstallationV4Read(ctx context.Context, d *schema.Resourc
 		return diag.FromErr(err)
 	}
 	return nil
+}
+
+func isNgtInstallationComplete(d *schema.ResourceData, meta interface{}, extID string) bool {
+	conn := meta.(*conns.Client).VmmAPI
+
+	resp, err := conn.VMAPIInstance.GetGuestToolsById(utils.StringPtr(extID))
+	if err != nil {
+		log.Printf("[DEBUG] Unable to read NGT configuration for VM %s while checking install completion: %v", extID, err)
+		return false
+	}
+
+	getResp := resp.Data.GetValue().(vmmConfig.GuestTools)
+	if !utils.BoolValue(getResp.IsInstalled) || !utils.BoolValue(getResp.IsEnabled) {
+		return false
+	}
+
+	if capabilities, ok := d.GetOk("capablities"); ok && len(capabilities.([]interface{})) > 0 {
+		actualCapabilities := make(map[string]bool)
+		for _, capability := range flattenCapabilities(getResp.Capabilities) {
+			actualCapabilities[capability] = true
+		}
+		for _, capability := range capabilities.([]interface{}) {
+			if !actualCapabilities[capability.(string)] {
+				return false
+			}
+		}
+	}
+
+	return true
+}
+
+func waitForNgtInstallationReadiness(ctx context.Context, d *schema.ResourceData, meta interface{}, extID string) error {
+	stateConf := &resource.StateChangeConf{
+		Pending: []string{"PENDING"},
+		Target:  []string{"COMPLETE"},
+		Refresh: func() (interface{}, string, error) {
+			if isNgtInstallationComplete(d, meta, extID) {
+				return extID, "COMPLETE", nil
+			}
+			return nil, "PENDING", nil
+		},
+		Timeout:    2 * time.Minute,
+		MinTimeout: 5 * time.Second,
+		Delay:      5 * time.Second,
+	}
+
+	_, err := stateConf.WaitForStateContext(ctx)
+	return err
 }
 
 // ResourceNutanixNGTInstallationV4Update Update NGT Configuration
