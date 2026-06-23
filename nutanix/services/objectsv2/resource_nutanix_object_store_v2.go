@@ -3,7 +3,10 @@ package objectstoresv2
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
+	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
@@ -11,17 +14,45 @@ import (
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
+	objectsclient "github.com/nutanix/ntnx-api-golang-clients/objects-go-client/v4/client"
 	objectsCommon "github.com/nutanix/ntnx-api-golang-clients/objects-go-client/v4/models/common/v1/config"
 	"github.com/nutanix/ntnx-api-golang-clients/objects-go-client/v4/models/objects/v4/config"
 	objectPrismConfig "github.com/nutanix/ntnx-api-golang-clients/objects-go-client/v4/models/prism/v4/config"
 	prismConfig "github.com/nutanix/ntnx-api-golang-clients/prism-go-client/v4/models/prism/v4/config"
 	conns "github.com/terraform-providers/terraform-provider-nutanix/nutanix"
 	"github.com/terraform-providers/terraform-provider-nutanix/nutanix/common"
+	objectstoresclient "github.com/terraform-providers/terraform-provider-nutanix/nutanix/sdks/v4/objectstores"
 	"github.com/terraform-providers/terraform-provider-nutanix/utils"
 )
 
 const ipv4PrefixLengthDefaultValue = 32
 const ipv6PrefixLengthDefaultValue = 128
+
+type legacyObjectStoreResponse struct {
+	Spec struct {
+		Resources struct {
+			AggregateResources struct {
+				TotalCapacityGiB   int64 `json:"total_capacity_gib"`
+				TotalMemorySizeMiB int64 `json:"total_memory_size_mib"`
+				TotalVCPUCount     int64 `json:"total_vcpu_count"`
+			} `json:"aggregate_resources"`
+			NumWorkerNodes int64 `json:"num_worker_nodes"`
+		} `json:"resources"`
+	} `json:"spec"`
+}
+
+type legacyObjectStoreScaleOutRequest struct {
+	UUID               string `json:"UUID"`
+	TotalVCPUCount     int64  `json:"total_vcpu_count"`
+	TotalMemorySizeMiB int64  `json:"total_memory_size_mib"`
+	TotalCapacityGiB   int64  `json:"total_capacity_gib"`
+}
+
+type legacyObjectStoreErrorResponse struct {
+	MessageList []struct {
+		Message string `json:"message"`
+	} `json:"message_list"`
+}
 
 func ResourceNutanixObjectStoresV2() *schema.Resource {
 	return &schema.Resource{
@@ -406,6 +437,15 @@ func ResourceNutanixObjectsV2Read(ctx context.Context, d *schema.ResourceData, m
 func ResourceNutanixObjectsV2Update(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
 	conn := meta.(*conns.Client).ObjectStoreAPI
 
+	if d.HasChange("num_worker_nodes") {
+		if diags := updateObjectStoreWorkerNodes(ctx, d, conn); diags != nil {
+			return diags
+		}
+		if !d.HasChanges("description", "deployment_version", "domain", "region", "public_network_ips", "total_capacity_gib", "state") {
+			return ResourceNutanixObjectsV2Read(ctx, d, meta)
+		}
+	}
+
 	readResp, err := conn.ObjectStoresAPIInstance.GetObjectstoreById(utils.StringPtr(d.Id()))
 	if err != nil {
 		return diag.Errorf("error reading object store: %s", err)
@@ -417,6 +457,41 @@ func ResourceNutanixObjectsV2Update(ctx context.Context, d *schema.ResourceData,
 	args["If-Match"] = utils.StringPtr(etagValue)
 
 	objectStoreUpdatePayload := readResp.Data.GetValue().(config.ObjectStore)
+	objectStoreUpdatePayload.State = nil
+
+	if d.HasChange("description") {
+		if description, ok := d.GetOk("description"); ok {
+			objectStoreUpdatePayload.Description = utils.StringPtr(description.(string))
+		}
+	}
+	if d.HasChange("deployment_version") {
+		if deploymentVersion, ok := d.GetOk("deployment_version"); ok {
+			objectStoreUpdatePayload.DeploymentVersion = utils.StringPtr(deploymentVersion.(string))
+		}
+	}
+	if d.HasChange("domain") {
+		if domain, ok := d.GetOk("domain"); ok {
+			objectStoreUpdatePayload.Domain = utils.StringPtr(domain.(string))
+		}
+	}
+	if d.HasChange("region") {
+		if region, ok := d.GetOk("region"); ok {
+			objectStoreUpdatePayload.Region = utils.StringPtr(region.(string))
+		}
+	}
+	if d.HasChange("public_network_ips") {
+		if publicNetworkIPs, ok := d.GetOk("public_network_ips"); ok {
+			objectStoreUpdatePayload.PublicNetworkIps = expandIPAddress(publicNetworkIPs.(*schema.Set).List())
+		}
+	}
+	if d.HasChange("total_capacity_gib") {
+		if totalCapacityGiB, ok := d.GetOk("total_capacity_gib"); ok {
+			objectStoreUpdatePayload.TotalCapacityGiB = utils.Int64Ptr(int64(totalCapacityGiB.(int)))
+		}
+	}
+	if state, ok := d.GetOk("state"); ok {
+		objectStoreUpdatePayload.State = expandState(state.(string))
+	}
 
 	// change the timeout for the update operation
 	d.Timeout(schema.TimeoutUpdate)
@@ -448,6 +523,161 @@ func ResourceNutanixObjectsV2Update(ctx context.Context, d *schema.ResourceData,
 	log.Printf("[DEBUG] Object Store Update Task Details: %s", string(aJSON))
 
 	return ResourceNutanixObjectsV2Read(ctx, d, meta)
+}
+
+func updateObjectStoreWorkerNodes(ctx context.Context, d *schema.ResourceData, conn *objectstoresclient.Client) diag.Diagnostics {
+	currentObjectStore, err := getLegacyObjectStore(ctx, conn.ObjectStoresAPIInstance.ApiClient, d.Id())
+	if err != nil {
+		return diag.Errorf("error reading legacy object store details for scale-out: %s", err)
+	}
+
+	currentWorkers := currentObjectStore.Spec.Resources.NumWorkerNodes
+	desiredWorkers := int64(d.Get("num_worker_nodes").(int))
+	if desiredWorkers == currentWorkers {
+		return nil
+	}
+	if desiredWorkers < currentWorkers {
+		return diag.Errorf("error scaling object store worker nodes: Nutanix Objects does not support scale-in via API (current: %d, desired: %d)", currentWorkers, desiredWorkers)
+	}
+	if currentWorkers < 3 {
+		return diag.Errorf("error scaling object store worker nodes: Nutanix Objects does not support scale-out from 1- or 2-worker clusters via API (current: %d, desired: %d); recreate is required for this HA transition", currentWorkers, desiredWorkers)
+	}
+
+	for nextWorkers := currentWorkers + 1; nextWorkers <= desiredWorkers; nextWorkers++ {
+		currentObjectStore, err = getLegacyObjectStore(ctx, conn.ObjectStoresAPIInstance.ApiClient, d.Id())
+		if err != nil {
+			return diag.Errorf("error refreshing legacy object store details before scale-out: %s", err)
+		}
+
+		currentWorkers = currentObjectStore.Spec.Resources.NumWorkerNodes
+		if currentWorkers <= 0 {
+			return diag.Errorf("error scaling object store worker nodes: invalid current worker count %d", currentWorkers)
+		}
+
+		aggregate := currentObjectStore.Spec.Resources.AggregateResources
+		payload := legacyObjectStoreScaleOutRequest{
+			UUID:               d.Id(),
+			TotalVCPUCount:     aggregate.TotalVCPUCount + aggregate.TotalVCPUCount/currentWorkers,
+			TotalMemorySizeMiB: aggregate.TotalMemorySizeMiB + aggregate.TotalMemorySizeMiB/currentWorkers,
+			TotalCapacityGiB:   aggregate.TotalCapacityGiB,
+		}
+
+		if err := scaleOutLegacyObjectStore(ctx, conn.ObjectStoresAPIInstance.ApiClient, d.Id(), payload); err != nil {
+			return diag.Errorf("error scaling object store worker nodes from %d to %d: %s", currentWorkers, nextWorkers, err)
+		}
+		if err := waitForObjectStoreWorkerNodes(ctx, conn, d.Id(), nextWorkers, d.Timeout(schema.TimeoutUpdate)); err != nil {
+			return diag.Errorf("error waiting for object store worker nodes to reach %d: %s", nextWorkers, err)
+		}
+	}
+
+	return nil
+}
+
+func getLegacyObjectStore(ctx context.Context, apiClient *objectsclient.ApiClient, objectStoreID string) (*legacyObjectStoreResponse, error) {
+	uri := "/oss/api/nutanix/v3/objectstores/" + url.PathEscape(objectStoreID)
+	resp, err := apiClient.CallApiWithContext(
+		ctx,
+		&uri,
+		http.MethodGet,
+		nil,
+		url.Values{},
+		map[string]string{},
+		url.Values{},
+		[]string{"application/json"},
+		[]string{},
+		[]string{"apiKeyAuthScheme", "basicAuthScheme"},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	body, err := responseBodyBytes(resp)
+	if err != nil {
+		return nil, err
+	}
+
+	var objectStore legacyObjectStoreResponse
+	if err := json.Unmarshal(body, &objectStore); err != nil {
+		return nil, fmt.Errorf("error decoding legacy object store response: %w", err)
+	}
+
+	return &objectStore, nil
+}
+
+func scaleOutLegacyObjectStore(ctx context.Context, apiClient *objectsclient.ApiClient, objectStoreID string, payload legacyObjectStoreScaleOutRequest) error {
+	uri := "/oss/api/nutanix/v3/objectstores/" + url.PathEscape(objectStoreID) + "/scale-out"
+	resp, err := apiClient.CallApiWithContext(
+		ctx,
+		&uri,
+		http.MethodPost,
+		&payload,
+		url.Values{},
+		map[string]string{},
+		url.Values{},
+		[]string{"application/json"},
+		[]string{"application/json"},
+		[]string{"apiKeyAuthScheme", "basicAuthScheme"},
+	)
+	if err != nil {
+		return err
+	}
+
+	body, err := responseBodyBytes(resp)
+	if err != nil {
+		return err
+	}
+	if len(body) == 0 {
+		return nil
+	}
+
+	var apiErr legacyObjectStoreErrorResponse
+	if err := json.Unmarshal(body, &apiErr); err == nil && len(apiErr.MessageList) > 0 {
+		return fmt.Errorf("%s", apiErr.MessageList[0].Message)
+	}
+
+	return nil
+}
+
+func responseBodyBytes(resp interface{}) ([]byte, error) {
+	switch v := resp.(type) {
+	case []byte:
+		return v, nil
+	case *string:
+		return []byte(*v), nil
+	case string:
+		return []byte(v), nil
+	default:
+		return nil, fmt.Errorf("unexpected API response type %T", resp)
+	}
+}
+
+func waitForObjectStoreWorkerNodes(ctx context.Context, conn *objectstoresclient.Client, objectStoreID string, desiredWorkers int64, timeout time.Duration) error {
+	stateConf := &resource.StateChangeConf{
+		Pending: []string{"PENDING"},
+		Target:  []string{"SUCCEEDED"},
+		Refresh: func() (interface{}, string, error) {
+			readResp, err := conn.ObjectStoresAPIInstance.GetObjectstoreById(utils.StringPtr(objectStoreID))
+			if err != nil {
+				return nil, "", err
+			}
+
+			objectStore := readResp.Data.GetValue().(config.ObjectStore)
+			if objectStore.NumWorkerNodes != nil &&
+				*objectStore.NumWorkerNodes == desiredWorkers &&
+				objectStore.State != nil &&
+				objectStore.State.GetName() == "OBJECT_STORE_AVAILABLE" {
+				return objectStore, "SUCCEEDED", nil
+			}
+
+			return objectStore, "PENDING", nil
+		},
+		Timeout:    timeout,
+		Delay:      10 * time.Second,
+		MinTimeout: 10 * time.Second,
+	}
+
+	_, err := stateConf.WaitForStateContext(ctx)
+	return err
 }
 
 func ResourceNutanixObjectsV2Delete(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {

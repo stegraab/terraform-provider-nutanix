@@ -511,6 +511,8 @@ func Provider() *schema.Provider {
 			"nutanix_object_store_v2":                         objectstoresv2.ResourceNutanixObjectStoresV2(),
 			"nutanix_bucket":                                  objectstoresv2.ResourceNutanixBucket(),
 			"nutanix_bucket_policy":                           objectstoresv2.ResourceNutanixBucketPolicy(),
+			"nutanix_bucket_replication":                      objectstoresv2.ResourceNutanixBucketReplication(),
+			"nutanix_object_store_multicluster":               objectstoresv2.ResourceNutanixObjectStoreMulticluster(),
 			"nutanix_object_store_certificate_v2":             objectstoresv2.ResourceNutanixObjectStoreCertificateV2(),
 			"nutanix_file_server_v2":                          filesv4.ResourceNutanixFileServerV2(),
 			"nutanix_file_server_user_v2":                     filesv4.ResourceNutanixFileServerUserV2(),

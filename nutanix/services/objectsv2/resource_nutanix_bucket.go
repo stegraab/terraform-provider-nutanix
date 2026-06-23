@@ -159,6 +159,20 @@ func resourceNutanixBucketRead(ctx context.Context, d *schema.ResourceData, meta
 
 	objectStoreExtID := d.Get("object_store_ext_id").(string)
 	name := d.Get("name").(string)
+	if objectStoreExtID == "" || name == "" {
+		idParts := strings.SplitN(d.Id(), "/", 2)
+		if len(idParts) != 2 || idParts[0] == "" || idParts[1] == "" {
+			return diag.Errorf("invalid bucket import id %q, expected <object_store_ext_id>/<bucket_name>", d.Id())
+		}
+		objectStoreExtID = idParts[0]
+		name = idParts[1]
+		if err := d.Set("object_store_ext_id", objectStoreExtID); err != nil {
+			return diag.FromErr(err)
+		}
+		if err := d.Set("name", name); err != nil {
+			return diag.FromErr(err)
+		}
+	}
 
 	respBody, statusCode, err := doObjectStoreProxyJSONRequest(ctx, cfg, http.MethodGet,
 		fmt.Sprintf("/oss/api/nutanix/v3/objectstore_proxy/%s/buckets/%s", objectStoreExtID, url.PathEscape(name)), nil, nil)
@@ -171,6 +185,9 @@ func resourceNutanixBucketRead(ctx context.Context, d *schema.ResourceData, meta
 	}
 	if statusCode == http.StatusInternalServerError && strings.Contains(string(respBody), "kInvalidBucket") {
 		d.SetId("")
+		return nil
+	}
+	if statusCode == http.StatusBadGateway || statusCode == http.StatusServiceUnavailable {
 		return nil
 	}
 	if statusCode != http.StatusOK && statusCode != http.StatusAccepted {
@@ -227,8 +244,25 @@ func resourceNutanixBucketDelete(ctx context.Context, d *schema.ResourceData, me
 	if err != nil {
 		return diag.FromErr(err)
 	}
+	if bucketDeleteBlockedByReplication(statusCode, respBody) {
+		if diags := removeCurrentBucketReplication(ctx, cfg, objectStoreExtID, name); diags.HasError() {
+			return diags
+		}
+		if diags := waitForBucketReplicationRemoved(ctx, cfg, objectStoreExtID, name); diags.HasError() {
+			return diags
+		}
+		respBody, statusCode, err = doObjectStoreProxyJSONRequest(ctx, cfg, http.MethodDelete,
+			fmt.Sprintf("/oss/api/nutanix/v3/objectstore_proxy/%s/buckets/%s", objectStoreExtID, url.PathEscape(name)), query, nil)
+		if err != nil {
+			return diag.FromErr(err)
+		}
+	}
 
 	if statusCode == http.StatusNotFound {
+		d.SetId("")
+		return nil
+	}
+	if statusCode == http.StatusServiceUnavailable && strings.Contains(string(respBody), "No entity with uuid") {
 		d.SetId("")
 		return nil
 	}
@@ -239,6 +273,33 @@ func resourceNutanixBucketDelete(ctx context.Context, d *schema.ResourceData, me
 
 	d.SetId("")
 	return nil
+}
+
+func bucketDeleteBlockedByReplication(statusCode int, respBody []byte) bool {
+	return statusCode == http.StatusInternalServerError &&
+		strings.Contains(string(respBody), "Invalid operation for a bucket with replication configuration")
+}
+
+func removeCurrentBucketReplication(ctx context.Context, cfg *objectStoreProxyConfig, objectStoreExtID, bucketName string) diag.Diagnostics {
+	endpoint := bucketReplicationEndpoint(objectStoreExtID, bucketName)
+	respBody, statusCode, err := doObjectStoreProxyJSONRequest(ctx, cfg, http.MethodGet, endpoint, nil, nil)
+	if err != nil {
+		return diag.FromErr(err)
+	}
+	if statusCode == http.StatusNotFound {
+		return nil
+	}
+	if statusCode != http.StatusOK && statusCode != http.StatusAccepted {
+		return diag.Errorf("error reading bucket replication before deleting bucket %q: status %d, response: %s", bucketName, statusCode, strings.TrimSpace(string(respBody)))
+	}
+	replicationRaw, err := normalizeBucketReplicationResponse(respBody)
+	if err != nil {
+		return diag.Errorf("error normalizing bucket replication before deleting bucket %q: %v", bucketName, err)
+	}
+	if bucketReplicationIsEmpty(replicationRaw) {
+		return nil
+	}
+	return removeBucketReplication(ctx, cfg, objectStoreExtID, bucketName, replicationRaw)
 }
 
 func objectStoreProxyFromMeta(meta interface{}) (*objectStoreProxyConfig, error) {

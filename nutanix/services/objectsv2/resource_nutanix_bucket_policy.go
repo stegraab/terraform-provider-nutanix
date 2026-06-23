@@ -86,6 +86,20 @@ func resourceNutanixBucketPolicyRead(ctx context.Context, d *schema.ResourceData
 
 	objectStoreExtID := d.Get("object_store_ext_id").(string)
 	bucketName := d.Get("bucket_name").(string)
+	if objectStoreExtID == "" || bucketName == "" {
+		idParts := strings.SplitN(d.Id(), "/", 2)
+		if len(idParts) != 2 || idParts[0] == "" || idParts[1] == "" {
+			return diag.Errorf("invalid bucket policy import id %q, expected <object_store_ext_id>/<bucket_name>", d.Id())
+		}
+		objectStoreExtID = idParts[0]
+		bucketName = idParts[1]
+		if err := d.Set("object_store_ext_id", objectStoreExtID); err != nil {
+			return diag.FromErr(err)
+		}
+		if err := d.Set("bucket_name", bucketName); err != nil {
+			return diag.FromErr(err)
+		}
+	}
 
 	endpoint := fmt.Sprintf(
 		"/oss/api/nutanix/v3/objectstore_proxy/%s/buckets/%s/policy",
@@ -98,6 +112,17 @@ func resourceNutanixBucketPolicyRead(ctx context.Context, d *schema.ResourceData
 		return diag.FromErr(err)
 	}
 	if statusCode == http.StatusNotFound {
+		d.SetId("")
+		return nil
+	}
+	if statusCode == http.StatusBadGateway || statusCode == http.StatusServiceUnavailable {
+		return nil
+	}
+	if statusCode == http.StatusInternalServerError && strings.Contains(string(respBody), "The specified bucket does not exist") {
+		d.SetId("")
+		return nil
+	}
+	if statusCode == http.StatusServiceUnavailable && strings.Contains(string(respBody), "No entity with uuid") {
 		d.SetId("")
 		return nil
 	}
@@ -131,11 +156,15 @@ func resourceNutanixBucketPolicyDelete(ctx context.Context, d *schema.ResourceDa
 	)
 
 	// Prefer server-side delete when supported.
-	_, statusCode, err := doObjectStoreProxyJSONRequest(ctx, cfg, http.MethodDelete, endpoint, nil, nil)
+	respBody, statusCode, err := doObjectStoreProxyJSONRequest(ctx, cfg, http.MethodDelete, endpoint, nil, nil)
 	if err != nil {
 		return diag.FromErr(err)
 	}
 	if statusCode == http.StatusNotFound {
+		d.SetId("")
+		return nil
+	}
+	if statusCode == http.StatusServiceUnavailable && strings.Contains(string(respBody), "No entity with uuid") {
 		d.SetId("")
 		return nil
 	}
@@ -149,9 +178,13 @@ func resourceNutanixBucketPolicyDelete(ctx context.Context, d *schema.ResourceDa
 		"Statement": []interface{}{},
 		"Version":   "2.0",
 	}
-	respBody, statusCode, err := doObjectStoreProxyJSONRequest(ctx, cfg, http.MethodPut, endpoint, nil, emptyPolicy)
+	respBody, statusCode, err = doObjectStoreProxyJSONRequest(ctx, cfg, http.MethodPut, endpoint, nil, emptyPolicy)
 	if err != nil {
 		return diag.FromErr(err)
+	}
+	if statusCode == http.StatusServiceUnavailable && strings.Contains(string(respBody), "No entity with uuid") {
+		d.SetId("")
+		return nil
 	}
 	if statusCode != http.StatusOK && statusCode != http.StatusAccepted && statusCode != http.StatusCreated {
 		return diag.Errorf("error deleting bucket policy for %q: status %d, response: %s", bucketName, statusCode, strings.TrimSpace(string(respBody)))
