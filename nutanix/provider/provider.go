@@ -516,6 +516,8 @@ func Provider() *schema.Provider {
 			"nutanix_object_store_certificate_v2":             objectstoresv2.ResourceNutanixObjectStoreCertificateV2(),
 			"nutanix_file_server_v2":                          filesv4.ResourceNutanixFileServerV2(),
 			"nutanix_file_server_user_v2":                     filesv4.ResourceNutanixFileServerUserV2(),
+			"nutanix_file_server_mount_target_v2":             filesv4.ResourceNutanixFileServerMountTargetV2(),
+			"nutanix_file_server_replication_policy_v2":       filesv4.ResourceNutanixFileServerReplicationPolicyV2(),
 			"nutanix_key_management_server_v2":                securityv2.ResourceNutanixKeyManagementServerV2(),
 			"nutanix_entity_group_v2":                         microsegv2.ResourceNutanixEntityGroupV2(),
 		},

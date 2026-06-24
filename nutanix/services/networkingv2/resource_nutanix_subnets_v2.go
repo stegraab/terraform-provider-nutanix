@@ -272,6 +272,14 @@ func ResourceNutanixSubnetV2() *schema.Resource {
 				Optional: true,
 				Computed: true,
 			},
+			"cluster_reference_list": {
+				Type:     schema.TypeList,
+				Optional: true,
+				Computed: true,
+				Elem: &schema.Schema{
+					Type: schema.TypeString,
+				},
+			},
 			"virtual_switch_reference": {
 				Type:     schema.TypeString,
 				Optional: true,
@@ -292,7 +300,17 @@ func ResourceNutanixSubnetV2() *schema.Resource {
 				Optional: true,
 				Computed: true,
 			},
-			"reserved_ip_addresses": SchemaForValuePrefixLength(),
+			"reserved_ip_addresses": {
+				Type:     schema.TypeList,
+				Optional: true,
+				Computed: true,
+				Elem: &schema.Resource{
+					Schema: map[string]*schema.Schema{
+						"ipv4": SchemaForValuePrefixLength(),
+						"ipv6": SchemaForValuePrefixLength(),
+					},
+				},
+			},
 			"dynamic_ip_addresses": {
 				Type:     schema.TypeList,
 				Optional: true,
@@ -500,6 +518,9 @@ func ResourceNutanixSubnetV2Create(ctx context.Context, d *schema.ResourceData, 
 	if clsRef, ok := d.GetOk("cluster_reference"); ok {
 		inputSpec.ClusterReference = utils.StringPtr(clsRef.(string))
 	}
+	if clsRefList, ok := d.GetOk("cluster_reference_list"); ok {
+		inputSpec.ClusterReferenceList = expandStringList(clsRefList.([]interface{}))
+	}
 	if vsRef, ok := d.GetOk("virtual_switch_reference"); ok {
 		inputSpec.VirtualSwitchReference = utils.StringPtr(vsRef.(string))
 	}
@@ -642,6 +663,9 @@ func ResourceNutanixSubnetV2Read(ctx context.Context, d *schema.ResourceData, me
 	if err := d.Set("cluster_reference", getResp.ClusterReference); err != nil {
 		return diag.FromErr(err)
 	}
+	if err := d.Set("cluster_reference_list", getResp.ClusterReferenceList); err != nil {
+		return diag.FromErr(err)
+	}
 	if err := d.Set("virtual_switch_reference", getResp.VirtualSwitchReference); err != nil {
 		return diag.FromErr(err)
 	}
@@ -736,6 +760,9 @@ func ResourceNutanixSubnetV2Update(ctx context.Context, d *schema.ResourceData, 
 	}
 	if d.HasChange("cluster_reference") {
 		updateSpec.ClusterReference = utils.StringPtr(d.Get("cluster_reference").(string))
+	}
+	if d.HasChange("cluster_reference_list") {
+		updateSpec.ClusterReferenceList = expandStringList(d.Get("cluster_reference_list").([]interface{}))
 	}
 	if d.HasChange("virtual_switch_reference") {
 		updateSpec.VirtualSwitchReference = utils.StringPtr(d.Get("virtual_switch_reference").(string))
@@ -1483,4 +1510,12 @@ func expandIPv6Pool(pr []interface{}) []import1.IPv6Pool {
 		return pools
 	}
 	return nil
+}
+
+func expandStringList(values []interface{}) []string {
+	stringList := make([]string, 0, len(values))
+	for _, value := range values {
+		stringList = append(stringList, value.(string))
+	}
+	return stringList
 }

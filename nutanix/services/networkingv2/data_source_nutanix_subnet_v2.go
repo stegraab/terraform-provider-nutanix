@@ -238,7 +238,17 @@ func DataSourceNutanixSubnetV2() *schema.Resource {
 				Type:     schema.TypeBool,
 				Computed: true,
 			},
-			"reserved_ip_addresses": SchemaForValuePrefixLength(),
+			"reserved_ip_addresses": {
+				Type:     schema.TypeList,
+				Optional: true,
+				Computed: true,
+				Elem: &schema.Resource{
+					Schema: map[string]*schema.Schema{
+						"ipv4": SchemaForValuePrefixLength(),
+						"ipv6": SchemaForValuePrefixLength(),
+					},
+				},
+			},
 			"dynamic_ip_addresses": {
 				Type:     schema.TypeList,
 				Computed: true,

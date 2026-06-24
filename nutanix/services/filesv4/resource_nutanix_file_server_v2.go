@@ -69,7 +69,6 @@ func ResourceNutanixFileServerV2() *schema.Resource {
 				Type:     schema.TypeList,
 				Required: true,
 				MinItems: 1,
-				ForceNew: true,
 				Elem: &schema.Resource{
 					Schema: map[string]*schema.Schema{
 						"value": {
@@ -82,7 +81,6 @@ func ResourceNutanixFileServerV2() *schema.Resource {
 			"ntp_servers": {
 				Type:     schema.TypeList,
 				Optional: true,
-				ForceNew: true,
 				Elem: &schema.Resource{
 					Schema: map[string]*schema.Schema{
 						"fqdn": {
@@ -128,6 +126,15 @@ func ResourceNutanixFileServerV2() *schema.Resource {
 				Required: true,
 				ForceNew: true,
 			},
+			"deployment_profile_types": {
+				Type:     schema.TypeList,
+				Optional: true,
+				ForceNew: true,
+				Elem: &schema.Schema{
+					Type:         schema.TypeString,
+					ValidateFunc: validation.StringInSlice([]string{"DEFAULT", "GENERAL_DEDICATED", "AIML_DEDICATED"}, false),
+				},
+			},
 			"external_networks": {
 				Type:     schema.TypeList,
 				Required: true,
@@ -139,10 +146,36 @@ func ResourceNutanixFileServerV2() *schema.Resource {
 							Type:     schema.TypeBool,
 							Optional: true,
 							Default:  true,
+							ForceNew: true,
 						},
 						"network_ext_id": {
 							Type:     schema.TypeString,
 							Required: true,
+							ForceNew: true,
+						},
+						"vlan_id": {
+							Type:         schema.TypeInt,
+							Optional:     true,
+							ForceNew:     true,
+							ValidateFunc: validation.IntBetween(0, 4095),
+						},
+						"default_gateway": {
+							Type:     schema.TypeString,
+							Optional: true,
+							ForceNew: true,
+						},
+						"subnet_mask": {
+							Type:     schema.TypeString,
+							Optional: true,
+							ForceNew: true,
+						},
+						"ip_addresses": {
+							Type:     schema.TypeList,
+							Optional: true,
+							ForceNew: true,
+							Elem: &schema.Schema{
+								Type: schema.TypeString,
+							},
 						},
 					},
 				},
@@ -158,10 +191,36 @@ func ResourceNutanixFileServerV2() *schema.Resource {
 							Type:     schema.TypeBool,
 							Optional: true,
 							Default:  true,
+							ForceNew: true,
 						},
 						"network_ext_id": {
 							Type:     schema.TypeString,
 							Required: true,
+							ForceNew: true,
+						},
+						"vlan_id": {
+							Type:         schema.TypeInt,
+							Optional:     true,
+							ForceNew:     true,
+							ValidateFunc: validation.IntBetween(0, 4095),
+						},
+						"default_gateway": {
+							Type:     schema.TypeString,
+							Optional: true,
+							ForceNew: true,
+						},
+						"subnet_mask": {
+							Type:     schema.TypeString,
+							Optional: true,
+							ForceNew: true,
+						},
+						"ip_addresses": {
+							Type:     schema.TypeList,
+							Optional: true,
+							ForceNew: true,
+							Elem: &schema.Schema{
+								Type: schema.TypeString,
+							},
 						},
 					},
 				},
@@ -175,6 +234,40 @@ func ResourceNutanixFileServerV2() *schema.Resource {
 				Computed: true,
 				Elem: &schema.Schema{
 					Type: schema.TypeString,
+				},
+			},
+			"vms": {
+				Type:     schema.TypeList,
+				Computed: true,
+				Elem: &schema.Resource{
+					Schema: map[string]*schema.Schema{
+						"ext_id": {
+							Type:     schema.TypeString,
+							Computed: true,
+						},
+						"name": {
+							Type:     schema.TypeString,
+							Computed: true,
+						},
+						"fsvm_uuid": {
+							Type:     schema.TypeString,
+							Computed: true,
+						},
+						"external_ip_addresses": {
+							Type:     schema.TypeList,
+							Computed: true,
+							Elem: &schema.Schema{
+								Type: schema.TypeString,
+							},
+						},
+						"internal_ip_addresses": {
+							Type:     schema.TypeList,
+							Computed: true,
+							Elem: &schema.Schema{
+								Type: schema.TypeString,
+							},
+						},
+					},
 				},
 			},
 			"directory_service": {
@@ -317,6 +410,12 @@ func resourceNutanixFileServerV2Update(ctx context.Context, d *schema.ResourceDa
 		return diag.Errorf("files api client is not initialized")
 	}
 
+	if d.HasChanges("dns_servers", "ntp_servers") {
+		if err := updateFileServer(ctx, apiClient, d); err != nil {
+			return diag.Errorf("error while updating file server %q: %v", d.Id(), err)
+		}
+	}
+
 	if d.HasChange("directory_service") {
 		if err := updateDirectoryService(apiClient, d.Id(), d.Get("directory_service").([]interface{})); err != nil {
 			return diag.Errorf("error while updating file server directory service for %q: %v", d.Id(), err)
@@ -369,7 +468,7 @@ func resourceNutanixFileServerV2Delete(ctx context.Context, d *schema.ResourceDa
 }
 
 func expandFileServerPayload(d *schema.ResourceData) map[string]interface{} {
-	return map[string]interface{}{
+	payload := map[string]interface{}{
 		"name":             d.Get("name").(string),
 		"sizeInGib":        d.Get("size_in_gib").(int),
 		"nvmsCount":        d.Get("nvms_count").(int),
@@ -384,6 +483,10 @@ func expandFileServerPayload(d *schema.ResourceData) map[string]interface{} {
 		"externalNetworks": expandNetworkList(d.Get("external_networks").([]interface{})),
 		"internalNetworks": expandNetworkList(d.Get("internal_networks").([]interface{})),
 	}
+	if deploymentProfiles, ok := d.GetOk("deployment_profile_types"); ok {
+		payload["deploymentProfileTypes"] = stringList(deploymentProfiles.([]interface{}))
+	}
+	return payload
 }
 
 func expandValueList(values []interface{}) []map[string]interface{} {
@@ -416,6 +519,17 @@ func expandNTPServers(values []interface{}) []map[string]interface{} {
 	return result
 }
 
+func stringList(values []interface{}) []string {
+	result := make([]string, 0, len(values))
+	for _, entry := range values {
+		if entry == nil {
+			continue
+		}
+		result = append(result, entry.(string))
+	}
+	return result
+}
+
 func expandNetworkList(values []interface{}) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(values))
 	for _, entry := range values {
@@ -423,12 +537,101 @@ func expandNetworkList(values []interface{}) []map[string]interface{} {
 			continue
 		}
 		v := entry.(map[string]interface{})
-		result = append(result, map[string]interface{}{
+		network := map[string]interface{}{
 			"isManaged":    v["is_managed"].(bool),
 			"networkExtId": v["network_ext_id"].(string),
+		}
+		if rawVLANID, ok := v["vlan_id"]; ok && rawVLANID != nil {
+			if vlanID := intValue(rawVLANID); vlanID > 0 {
+				network["vlanId"] = vlanID
+			}
+		}
+		if gateway := strings.TrimSpace(stringValue(v["default_gateway"])); gateway != "" {
+			network["defaultGateway"] = map[string]interface{}{
+				"ipv4": map[string]interface{}{"value": gateway},
+			}
+		}
+		if subnetMask := strings.TrimSpace(stringValue(v["subnet_mask"])); subnetMask != "" {
+			network["subnetMask"] = map[string]interface{}{
+				"ipv4": map[string]interface{}{"value": subnetMask},
+			}
+		}
+		if addresses := expandIPv4AddressList(v["ip_addresses"].([]interface{})); len(addresses) > 0 {
+			network["ipAddresses"] = addresses
+		}
+		result = append(result, network)
+	}
+	return result
+}
+
+func expandIPv4AddressList(values []interface{}) []map[string]interface{} {
+	result := make([]map[string]interface{}, 0, len(values))
+	for _, entry := range values {
+		value := strings.TrimSpace(stringValue(entry))
+		if value == "" {
+			continue
+		}
+		result = append(result, map[string]interface{}{
+			"ipv4": map[string]interface{}{"value": value},
 		})
 	}
 	return result
+}
+
+func normalizeValueList(values []map[string]interface{}) []map[string]interface{} {
+	result := make([]map[string]interface{}, 0, len(values))
+	for _, entry := range values {
+		value := strings.TrimSpace(stringValue(entry["value"]))
+		if value == "" {
+			continue
+		}
+		result = append(result, map[string]interface{}{"value": value})
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		return result[i]["value"].(string) < result[j]["value"].(string)
+	})
+	return result
+}
+
+func normalizeNTPServers(values []map[string]interface{}) []map[string]interface{} {
+	result := make([]map[string]interface{}, 0, len(values))
+	for _, entry := range values {
+		value := strings.TrimSpace(stringValue(entry["fqdn"]))
+		if value == "" {
+			if fqdnMap, ok := entry["fqdn"].(map[string]interface{}); ok {
+				value = strings.TrimSpace(stringValue(fqdnMap["value"]))
+			}
+		}
+		if value == "" {
+			continue
+		}
+		result = append(result, map[string]interface{}{"fqdn": value})
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		return result[i]["fqdn"].(string) < result[j]["fqdn"].(string)
+	})
+	return result
+}
+
+func listValuesEqual(current, desired []map[string]interface{}) bool {
+	if len(current) != len(desired) {
+		return false
+	}
+
+	for i := range current {
+		if len(current[i]) != len(desired[i]) {
+			return false
+		}
+		for key, currentValue := range current[i] {
+			if desired[i][key] != currentValue {
+				return false
+			}
+		}
+	}
+
+	return true
 }
 
 func flattenFileServerToState(d *schema.ResourceData, item map[string]interface{}) {
@@ -451,6 +654,7 @@ func flattenFileServerToState(d *schema.ResourceData, item map[string]interface{
 	_ = d.Set("internal_networks", flattenNetworks(item["internalNetworks"]))
 	_ = d.Set("deployment_status", stringValue(item["deploymentStatus"]))
 	_ = d.Set("external_ip_addresses", flattenNetworkIPAddresses(item["externalNetworks"]))
+	_ = d.Set("vms", flattenFileServerVMs(item["vms"]))
 }
 
 func flattenValueList(raw interface{}) []map[string]interface{} {
@@ -504,12 +708,39 @@ func flattenNetworks(raw interface{}) []map[string]interface{} {
 		if !ok {
 			continue
 		}
-		result = append(result, map[string]interface{}{
-			"is_managed":     boolValue(v["isManaged"]),
+		isManaged := boolValue(v["isManaged"])
+		network := map[string]interface{}{
+			"is_managed":     isManaged,
 			"network_ext_id": stringValue(v["networkExtId"]),
+			"vlan_id":        intValue(v["vlanId"]),
+		}
+		if !isManaged {
+			network["default_gateway"] = flattenIPv4Value(v["defaultGateway"])
+			network["subnet_mask"] = flattenIPv4Value(v["subnetMask"])
+			network["ip_addresses"] = flattenNetworkIPAddresses([]interface{}{v})
+		}
+		result = append(result, map[string]interface{}{
+			"is_managed":      network["is_managed"],
+			"network_ext_id":  network["network_ext_id"],
+			"vlan_id":         network["vlan_id"],
+			"default_gateway": network["default_gateway"],
+			"subnet_mask":     network["subnet_mask"],
+			"ip_addresses":    network["ip_addresses"],
 		})
 	}
 	return result
+}
+
+func flattenIPv4Value(raw interface{}) string {
+	value, ok := raw.(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	ipv4, ok := value["ipv4"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	return stringValue(ipv4["value"])
 }
 
 func flattenNetworkIPAddresses(raw interface{}) []string {
@@ -546,6 +777,40 @@ func flattenNetworkIPAddresses(raw interface{}) []string {
 	return result
 }
 
+func flattenFileServerVMs(raw interface{}) []map[string]interface{} {
+	list, ok := raw.([]interface{})
+	if !ok {
+		return nil
+	}
+
+	result := make([]map[string]interface{}, 0, len(list))
+	for _, entry := range list {
+		vm, ok := entry.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		result = append(result, map[string]interface{}{
+			"ext_id":                stringValue(vm["extId"]),
+			"name":                  stringValue(vm["name"]),
+			"fsvm_uuid":             stringValue(vm["fsvmUuid"]),
+			"external_ip_addresses": flattenNetworkIPAddresses(vm["externalNetworks"]),
+			"internal_ip_addresses": flattenNetworkIPAddresses(vm["internalNetworks"]),
+		})
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		left := result[i]["name"].(string)
+		right := result[j]["name"].(string)
+		if left == right {
+			return result[i]["ext_id"].(string) < result[j]["ext_id"].(string)
+		}
+		return left < right
+	})
+
+	return result
+}
+
 func fileServerByNameRefreshFunc(apiClient *filesClient.ApiClient, name string) resource.StateRefreshFunc {
 	return func() (interface{}, string, error) {
 		item, err := getFileServerByName(apiClient, name)
@@ -570,6 +835,62 @@ func fileServerByIDRefreshFunc(apiClient *filesClient.ApiClient, extID string) r
 		}
 		return item, "FOUND", nil
 	}
+}
+
+func fileServerConfigRefreshFunc(apiClient *filesClient.ApiClient, extID string, desiredDNSRaw []interface{}, desiredNTPRaw []interface{}) resource.StateRefreshFunc {
+	desiredDNS := normalizeValueList(expandValueList(desiredDNSRaw))
+	desiredNTP := normalizeNTPServers(expandNTPServers(desiredNTPRaw))
+
+	return func() (interface{}, string, error) {
+		item, notFound, err := getFileServerByID(apiClient, extID)
+		if err != nil {
+			return nil, "", err
+		}
+		if notFound || item == nil {
+			return nil, "PENDING", nil
+		}
+
+		currentDNS := normalizeValueList(flattenValueList(item["dnsServers"]))
+		currentNTP := normalizeNTPServers(flattenNTPServers(item["ntpServers"]))
+		if listValuesEqual(currentDNS, desiredDNS) && listValuesEqual(currentNTP, desiredNTP) {
+			return item, "UPDATED", nil
+		}
+
+		return item, "PENDING", nil
+	}
+}
+
+func updateFileServer(ctx context.Context, apiClient *filesClient.ApiClient, d *schema.ResourceData) error {
+	_, _, headers, err := filesRequestWithHeaders(apiClient, http.MethodGet, filesAPIBasePath+"/"+d.Id(), nil, nil)
+	if err != nil {
+		return fmt.Errorf("error while reading file server %q before update: %w", d.Id(), err)
+	}
+
+	updateHeaders := map[string]string{}
+	if etag := headers.Get("Etag"); etag != "" {
+		updateHeaders["If-Match"] = etag
+	}
+
+	payload := expandFileServerPayload(d)
+	respBody, statusCode, _, err := filesRequestWithHeaders(apiClient, http.MethodPut, filesAPIBasePath+"/"+d.Id(), payload, updateHeaders)
+	if err != nil {
+		return err
+	}
+	if statusCode >= http.StatusBadRequest || filesHasError(respBody) {
+		return fmt.Errorf("%s", filesErrorMessage(respBody, statusCode))
+	}
+
+	stateConf := &resource.StateChangeConf{
+		Pending:    []string{"PENDING"},
+		Target:     []string{"UPDATED"},
+		Refresh:    fileServerConfigRefreshFunc(apiClient, d.Id(), d.Get("dns_servers").([]interface{}), d.Get("ntp_servers").([]interface{})),
+		Timeout:    30 * time.Minute,
+		Delay:      5 * time.Second,
+		MinTimeout: 5 * time.Second,
+	}
+
+	_, err = stateConf.WaitForStateContext(ctx)
+	return err
 }
 
 func getFileServerByName(apiClient *filesClient.ApiClient, name string) (map[string]interface{}, error) {
@@ -1031,6 +1352,7 @@ func filesIsNotFound(resp map[string]interface{}) bool {
 	msg := strings.ToLower(filesErrorMessage(resp, 0))
 	return strings.Contains(msg, "entity_not_found") ||
 		strings.Contains(msg, "cannot be found") ||
+		strings.Contains(msg, "failed to fetch data replication policy by extid") ||
 		strings.Contains(msg, "fil-40011")
 }
 
@@ -1073,6 +1395,11 @@ func filesErrorMessage(resp map[string]interface{}, statusCode int) string {
 	}
 	if msg := stringValue(resp["error"]); msg != "" {
 		return msg
+	}
+	if len(resp) > 0 {
+		if payload, err := json.Marshal(resp); err == nil {
+			return string(payload)
+		}
 	}
 	if statusCode > 0 {
 		return fmt.Sprintf("request failed with status code %d", statusCode)
