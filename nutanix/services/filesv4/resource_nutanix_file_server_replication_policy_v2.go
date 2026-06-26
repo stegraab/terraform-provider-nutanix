@@ -54,10 +54,11 @@ func ResourceNutanixFileServerReplicationPolicyV2() *schema.Resource {
 				ValidateFunc: validation.StringIsNotEmpty,
 			},
 			"secondary_file_server_ext_id": {
-				Type:         schema.TypeString,
-				Optional:     true,
-				ForceNew:     true,
-				ValidateFunc: validation.StringIsNotEmpty,
+				Type:             schema.TypeString,
+				Optional:         true,
+				ForceNew:         true,
+				ValidateFunc:     validation.StringIsNotEmpty,
+				DiffSuppressFunc: suppressMissingFilesReadbackDiff,
 			},
 			"primary_cluster_ext_id": {
 				Type:         schema.TypeString,
@@ -432,6 +433,10 @@ func buildFileServerReplicationNetworkReference(subnetName, subnetExtID, vpcExtI
 		network["vpcExtId"] = vpcExtID
 	}
 	return network
+}
+
+func suppressMissingFilesReadbackDiff(_ string, oldValue string, newValue string, _ *schema.ResourceData) bool {
+	return oldValue == "" && newValue != ""
 }
 
 func expandFileServerReplicationEntities(values []interface{}) []map[string]interface{} {
