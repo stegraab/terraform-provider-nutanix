@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
 	"sort"
 	"strings"
 	"time"
@@ -154,10 +155,11 @@ func ResourceNutanixFileServerV2() *schema.Resource {
 							ForceNew: true,
 						},
 						"vlan_id": {
-							Type:         schema.TypeInt,
-							Optional:     true,
-							ForceNew:     true,
-							ValidateFunc: validation.IntBetween(0, 4095),
+							Type:             schema.TypeInt,
+							Optional:         true,
+							ForceNew:         true,
+							ValidateFunc:     validation.IntBetween(0, 4095),
+							DiffSuppressFunc: suppressMissingFilesVLANIDDiff,
 						},
 						"default_gateway": {
 							Type:     schema.TypeString,
@@ -199,10 +201,11 @@ func ResourceNutanixFileServerV2() *schema.Resource {
 							ForceNew: true,
 						},
 						"vlan_id": {
-							Type:         schema.TypeInt,
-							Optional:     true,
-							ForceNew:     true,
-							ValidateFunc: validation.IntBetween(0, 4095),
+							Type:             schema.TypeInt,
+							Optional:         true,
+							ForceNew:         true,
+							ValidateFunc:     validation.IntBetween(0, 4095),
+							DiffSuppressFunc: suppressMissingFilesVLANIDDiff,
 						},
 						"default_gateway": {
 							Type:     schema.TypeString,
@@ -650,8 +653,8 @@ func flattenFileServerToState(d *schema.ResourceData, item map[string]interface{
 	_ = d.Set("version", stringValue(item["version"]))
 	_ = d.Set("cvm_ip_addresses", flattenValueList(item["cvmIpAddresses"]))
 	_ = d.Set("cluster_ext_id", stringValue(item["clusterExtId"]))
-	_ = d.Set("external_networks", flattenNetworks(item["externalNetworks"]))
-	_ = d.Set("internal_networks", flattenNetworks(item["internalNetworks"]))
+	_ = d.Set("external_networks", flattenNetworks(d, "external_networks", item["externalNetworks"]))
+	_ = d.Set("internal_networks", flattenNetworks(d, "internal_networks", item["internalNetworks"]))
 	_ = d.Set("deployment_status", stringValue(item["deploymentStatus"]))
 	_ = d.Set("external_ip_addresses", flattenNetworkIPAddresses(item["externalNetworks"]))
 	_ = d.Set("vms", flattenFileServerVMs(item["vms"]))
@@ -697,11 +700,12 @@ func flattenNTPServers(raw interface{}) []map[string]interface{} {
 	return result
 }
 
-func flattenNetworks(raw interface{}) []map[string]interface{} {
+func flattenNetworks(d *schema.ResourceData, key string, raw interface{}) []map[string]interface{} {
 	list, ok := raw.([]interface{})
 	if !ok {
 		return nil
 	}
+	previousByNetworkExtID := previousNetworksByExtID(d, key)
 	result := make([]map[string]interface{}, 0, len(list))
 	for _, entry := range list {
 		v, ok := entry.(map[string]interface{})
@@ -713,6 +717,13 @@ func flattenNetworks(raw interface{}) []map[string]interface{} {
 			"is_managed":     isManaged,
 			"network_ext_id": stringValue(v["networkExtId"]),
 			"vlan_id":        intValue(v["vlanId"]),
+		}
+		if network["vlan_id"].(int) == 0 {
+			if previous, ok := previousByNetworkExtID[network["network_ext_id"].(string)]; ok {
+				if previousVLANID := intValue(previous["vlan_id"]); previousVLANID > 0 {
+					network["vlan_id"] = previousVLANID
+				}
+			}
 		}
 		if !isManaged {
 			network["default_gateway"] = flattenIPv4Value(v["defaultGateway"])
@@ -727,6 +738,26 @@ func flattenNetworks(raw interface{}) []map[string]interface{} {
 			"subnet_mask":     network["subnet_mask"],
 			"ip_addresses":    network["ip_addresses"],
 		})
+	}
+	return result
+}
+
+func previousNetworksByExtID(d *schema.ResourceData, key string) map[string]map[string]interface{} {
+	result := map[string]map[string]interface{}{}
+	previous, ok := d.Get(key).([]interface{})
+	if !ok {
+		return result
+	}
+	for _, entry := range previous {
+		network, ok := entry.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		networkExtID := stringValue(network["network_ext_id"])
+		if networkExtID == "" {
+			continue
+		}
+		result[networkExtID] = network
 	}
 	return result
 }
@@ -773,8 +804,19 @@ func flattenNetworkIPAddresses(raw interface{}) []string {
 			}
 		}
 	}
-	sort.Strings(result)
+	sort.Slice(result, func(i, j int) bool {
+		left, leftErr := netip.ParseAddr(result[i])
+		right, rightErr := netip.ParseAddr(result[j])
+		if leftErr == nil && rightErr == nil {
+			return left.Compare(right) < 0
+		}
+		return result[i] < result[j]
+	})
 	return result
+}
+
+func suppressMissingFilesVLANIDDiff(_ string, oldValue string, newValue string, _ *schema.ResourceData) bool {
+	return oldValue == "0" && newValue != "" && newValue != "0"
 }
 
 func flattenFileServerVMs(raw interface{}) []map[string]interface{} {

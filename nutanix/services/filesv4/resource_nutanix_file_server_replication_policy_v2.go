@@ -425,12 +425,6 @@ func buildFileServerReplicationNetworkReference(subnetName, subnetExtID, vpcExtI
 		"$objectType": "datapolicies.v4.config.NameReference",
 		"name":        subnetName,
 	}
-	if subnetExtID != "" {
-		subnetReference = map[string]interface{}{
-			"$objectType": "datapolicies.v4.config.ExtIdReference",
-			"extId":       subnetExtID,
-		}
-	}
 	network := map[string]interface{}{
 		"subnetReference": subnetReference,
 	}
