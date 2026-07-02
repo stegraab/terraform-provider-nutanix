@@ -112,6 +112,12 @@ func virtualSwitchSchemaV2(dataSource bool) map[string]*schema.Schema {
 	if dataSource {
 		s["ext_id"].ExactlyOneOf = []string{"ext_id", "name"}
 		s["name"].ExactlyOneOf = []string{"ext_id", "name"}
+		s["cluster_ext_id"] = &schema.Schema{
+			Type:          schema.TypeString,
+			Optional:      true,
+			RequiredWith:  []string{"name"},
+			ConflictsWith: []string{"ext_id"},
+		}
 	}
 
 	return s
@@ -145,7 +151,11 @@ func dataSourceNutanixVirtualSwitchV2Read(ctx context.Context, d *schema.Resourc
 		}
 		virtualSwitch = value
 	} else {
-		value, err := findVirtualSwitchByName(conn, d.Get("name").(string))
+		var clusterExtID string
+		if value, ok := d.GetOk("cluster_ext_id"); ok {
+			clusterExtID = value.(string)
+		}
+		value, err := findVirtualSwitchByName(conn, d.Get("name").(string), clusterExtID)
 		if err != nil {
 			return diag.FromErr(err)
 		}
@@ -171,7 +181,7 @@ func getVirtualSwitchByID(conn *networkingClient.Client, extID string) (*config.
 	return &value, nil
 }
 
-func findVirtualSwitchByName(conn *networkingClient.Client, name string) (*config.VirtualSwitch, error) {
+func findVirtualSwitchByName(conn *networkingClient.Client, name string, clusterExtID string) (*config.VirtualSwitch, error) {
 	matches := make([]config.VirtualSwitch, 0, 1)
 	page := 0
 	limit := 100
@@ -189,7 +199,7 @@ func findVirtualSwitchByName(conn *networkingClient.Client, name string) (*confi
 			return nil, fmt.Errorf("unexpected response type from list virtual switches API")
 		}
 		for i := range virtualSwitches {
-			if utils.StringValue(virtualSwitches[i].Name) == name {
+			if utils.StringValue(virtualSwitches[i].Name) == name && virtualSwitchContainsCluster(&virtualSwitches[i], clusterExtID) {
 				matches = append(matches, virtualSwitches[i])
 			}
 		}
@@ -206,6 +216,18 @@ func findVirtualSwitchByName(conn *networkingClient.Client, name string) (*confi
 		return nil, fmt.Errorf("found multiple virtual switches named %q", name)
 	}
 	return &matches[0], nil
+}
+
+func virtualSwitchContainsCluster(virtualSwitch *config.VirtualSwitch, clusterExtID string) bool {
+	if clusterExtID == "" {
+		return true
+	}
+	for _, cluster := range virtualSwitch.Clusters {
+		if utils.StringValue(cluster.ExtId) == clusterExtID {
+			return true
+		}
+	}
+	return false
 }
 
 func setVirtualSwitchFields(d *schema.ResourceData, virtualSwitch *config.VirtualSwitch) diag.Diagnostics {
