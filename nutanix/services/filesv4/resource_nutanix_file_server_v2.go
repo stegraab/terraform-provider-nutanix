@@ -24,6 +24,7 @@ import (
 const filesAPIBasePath = "/api/files/v4.0.a6/config/file-servers"
 const filesDirectoryServicesPathTemplate = "/api/files/v4.0/config/file-servers/%s/directory-services"
 const filesConfigureNameServicesPathTemplate = "/api/files/v4.0.a6/config/file-servers/%s/$actions/configure-name-services"
+const prismV2TaskPathTemplate = "/api/nutanix/v2.0/tasks/%s"
 
 func ResourceNutanixFileServerV2() *schema.Resource {
 	return &schema.Resource{
@@ -454,6 +455,11 @@ func resourceNutanixFileServerV2Delete(ctx context.Context, d *schema.ResourceDa
 			return nil
 		}
 		return diag.Errorf("error while deleting file server %q: %s", d.Id(), filesErrorMessage(respBody, statusCode))
+	}
+	if taskID := responseTaskExtID(respBody); taskID != "" {
+		if err := waitForPrismV2Task(ctx, apiClient, taskID, d.Timeout(schema.TimeoutDelete)); err != nil {
+			return diag.Errorf("error while deleting file server %q: %v", d.Id(), err)
+		}
 	}
 
 	stateConf := &resource.StateChangeConf{
@@ -1299,6 +1305,44 @@ func expandStringList(values []interface{}) []string {
 func filesRequest(apiClient *filesClient.ApiClient, method, uri string, body interface{}) (map[string]interface{}, int, error) {
 	respBody, statusCode, _, err := filesRequestWithHeaders(apiClient, method, uri, body, nil)
 	return respBody, statusCode, err
+}
+
+func waitForPrismV2Task(ctx context.Context, apiClient *filesClient.ApiClient, taskID string, timeout time.Duration) error {
+	stateConf := &resource.StateChangeConf{
+		Pending: []string{"Queued", "Running", "Pending"},
+		Target:  []string{"Succeeded"},
+		Refresh: func() (interface{}, string, error) {
+			respBody, statusCode, err := filesRequest(apiClient, http.MethodGet, fmt.Sprintf(prismV2TaskPathTemplate, taskID), nil)
+			if err != nil {
+				return nil, "", err
+			}
+			if statusCode >= http.StatusBadRequest || filesHasError(respBody) {
+				return nil, "", fmt.Errorf("%s", filesErrorMessage(respBody, statusCode))
+			}
+
+			status := stringValue(respBody["progress_status"])
+			switch status {
+			case "Succeeded":
+				return respBody, status, nil
+			case "Failed":
+				return nil, status, fmt.Errorf("%s", filesErrorMessage(respBody, statusCode))
+			case "":
+				return respBody, "Running", nil
+			default:
+				return respBody, status, nil
+			}
+		},
+		Timeout:    timeout,
+		Delay:      5 * time.Second,
+		MinTimeout: 5 * time.Second,
+	}
+	_, err := stateConf.WaitForStateContext(ctx)
+	return err
+}
+
+func responseTaskExtID(resp map[string]interface{}) string {
+	data, _ := resp["data"].(map[string]interface{})
+	return stringValue(data["extId"])
 }
 
 func filesRequestWithHeaders(apiClient *filesClient.ApiClient, method, uri string, body interface{}, headers map[string]string) (map[string]interface{}, int, http.Header, error) {

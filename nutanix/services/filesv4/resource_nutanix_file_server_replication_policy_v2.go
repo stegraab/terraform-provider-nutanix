@@ -331,7 +331,7 @@ func resourceNutanixFileServerReplicationPolicyV2Read(_ context.Context, d *sche
 	return nil
 }
 
-func resourceNutanixFileServerReplicationPolicyV2Delete(_ context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+func resourceNutanixFileServerReplicationPolicyV2Delete(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
 	apiClient := meta.(*conns.Client).FilesAPI.APIClientInstance
 	if apiClient == nil {
 		return diag.Errorf("files api client is not initialized")
@@ -356,6 +356,27 @@ func resourceNutanixFileServerReplicationPolicyV2Delete(_ context.Context, d *sc
 	}
 	if statusCode >= http.StatusBadRequest || filesHasError(respBody) {
 		return diag.Errorf("error while deleting file server replication policy %q: %s", d.Id(), filesErrorMessage(respBody, statusCode))
+	}
+
+	stateConf := &resource.StateChangeConf{
+		Pending: []string{"FOUND"},
+		Target:  []string{"NOT_FOUND"},
+		Refresh: func() (interface{}, string, error) {
+			item, _, notFound, err := getFileServerReplicationPolicyByID(apiClient, d.Id())
+			if err != nil {
+				return nil, "", err
+			}
+			if notFound {
+				return map[string]interface{}{}, "NOT_FOUND", nil
+			}
+			return item, "FOUND", nil
+		},
+		Timeout:    d.Timeout(schema.TimeoutDelete),
+		Delay:      5 * time.Second,
+		MinTimeout: 5 * time.Second,
+	}
+	if _, err := stateConf.WaitForStateContext(ctx); err != nil {
+		return diag.Errorf("error waiting for file server replication policy %q to be deleted: %v", d.Id(), err)
 	}
 
 	d.SetId("")
@@ -435,8 +456,8 @@ func buildFileServerReplicationNetworkReference(subnetName, subnetExtID, vpcExtI
 	return network
 }
 
-func suppressMissingFilesReadbackDiff(_ string, oldValue string, newValue string, _ *schema.ResourceData) bool {
-	return oldValue == "" && newValue != ""
+func suppressMissingFilesReadbackDiff(_ string, oldValue string, newValue string, d *schema.ResourceData) bool {
+	return d.Id() != "" && oldValue == "" && newValue != ""
 }
 
 func expandFileServerReplicationEntities(values []interface{}) []map[string]interface{} {
