@@ -173,7 +173,7 @@ func ResourceNutanixFileServerV2() *schema.Resource {
 							ForceNew: true,
 						},
 						"ip_addresses": {
-							Type:     schema.TypeList,
+							Type:     schema.TypeSet,
 							Optional: true,
 							ForceNew: true,
 							Elem: &schema.Schema{
@@ -219,7 +219,7 @@ func ResourceNutanixFileServerV2() *schema.Resource {
 							ForceNew: true,
 						},
 						"ip_addresses": {
-							Type:     schema.TypeList,
+							Type:     schema.TypeSet,
 							Optional: true,
 							ForceNew: true,
 							Elem: &schema.Schema{
@@ -565,7 +565,7 @@ func expandNetworkList(values []interface{}) []map[string]interface{} {
 				"ipv4": map[string]interface{}{"value": subnetMask},
 			}
 		}
-		if addresses := expandIPv4AddressList(v["ip_addresses"].([]interface{})); len(addresses) > 0 {
+		if addresses := expandIPv4AddressList(v["ip_addresses"]); len(addresses) > 0 {
 			network["ipAddresses"] = addresses
 		}
 		result = append(result, network)
@@ -573,7 +573,16 @@ func expandNetworkList(values []interface{}) []map[string]interface{} {
 	return result
 }
 
-func expandIPv4AddressList(values []interface{}) []map[string]interface{} {
+func expandIPv4AddressList(raw interface{}) []map[string]interface{} {
+	var values []interface{}
+	switch typed := raw.(type) {
+	case []interface{}:
+		values = typed
+	case *schema.Set:
+		values = typed.List()
+	default:
+		return nil
+	}
 	result := make([]map[string]interface{}, 0, len(values))
 	for _, entry := range values {
 		value := strings.TrimSpace(stringValue(entry))
@@ -734,7 +743,18 @@ func flattenNetworks(d *schema.ResourceData, key string, raw interface{}) []map[
 		if !isManaged {
 			network["default_gateway"] = flattenIPv4Value(v["defaultGateway"])
 			network["subnet_mask"] = flattenIPv4Value(v["subnetMask"])
-			network["ip_addresses"] = flattenNetworkIPAddresses([]interface{}{v})
+			ipAddresses := flattenNetworkIPAddresses([]interface{}{v})
+			if key == "internal_networks" {
+				if virtualIP := flattenIPv4Value(v["virtualIpAddress"]); virtualIP != "" {
+					ipAddresses = append(ipAddresses, virtualIP)
+				}
+			}
+			if previous, ok := previousByNetworkExtID[network["network_ext_id"].(string)]; ok {
+				if previousIPAddresses := previousNetworkIPAddresses(previous); sameIPSet(previousIPAddresses, ipAddresses) {
+					ipAddresses = previousIPAddresses
+				}
+			}
+			network["ip_addresses"] = ipAddresses
 		}
 		result = append(result, map[string]interface{}{
 			"is_managed":      network["is_managed"],
@@ -746,6 +766,45 @@ func flattenNetworks(d *schema.ResourceData, key string, raw interface{}) []map[
 		})
 	}
 	return result
+}
+
+func previousNetworkIPAddresses(raw map[string]interface{}) []string {
+	switch list := raw["ip_addresses"].(type) {
+	case []interface{}:
+		result := make([]string, 0, len(list))
+		for _, entry := range list {
+			if value := stringValue(entry); value != "" {
+				result = append(result, value)
+			}
+		}
+		return result
+	case []string:
+		result := make([]string, 0, len(list))
+		for _, entry := range list {
+			if entry != "" {
+				result = append(result, entry)
+			}
+		}
+		return result
+	default:
+		return nil
+	}
+}
+
+func sameIPSet(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	leftCopy := append([]string(nil), left...)
+	rightCopy := append([]string(nil), right...)
+	sortNetworkIPAddresses(leftCopy)
+	sortNetworkIPAddresses(rightCopy)
+	for i := range leftCopy {
+		if leftCopy[i] != rightCopy[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func previousNetworksByExtID(d *schema.ResourceData, key string) map[string]map[string]interface{} {
@@ -810,15 +869,19 @@ func flattenNetworkIPAddresses(raw interface{}) []string {
 			}
 		}
 	}
-	sort.Slice(result, func(i, j int) bool {
-		left, leftErr := netip.ParseAddr(result[i])
-		right, rightErr := netip.ParseAddr(result[j])
+	sortNetworkIPAddresses(result)
+	return result
+}
+
+func sortNetworkIPAddresses(addresses []string) {
+	sort.Slice(addresses, func(i, j int) bool {
+		left, leftErr := netip.ParseAddr(addresses[i])
+		right, rightErr := netip.ParseAddr(addresses[j])
 		if leftErr == nil && rightErr == nil {
 			return left.Compare(right) < 0
 		}
-		return result[i] < result[j]
+		return addresses[i] < addresses[j]
 	})
-	return result
 }
 
 func suppressMissingFilesVLANIDDiff(_ string, oldValue string, newValue string, _ *schema.ResourceData) bool {
