@@ -60,7 +60,7 @@ The following arguments are supported:
 * `is_vga_console_enabled`: Indicates whether the VGA console should be disabled or not.
 * `machine_type`: Machine type for the VM. Machine type Q35 is required for secure boot and does not support IDE disks.
 * `vtpm_config`: Indicates how the vTPM for the VM should be configured.
-* `vtpm_disk_id`: External identifier of the firmware disk that stores the VM's vTPM state.
+* `vtpm_disk_id`: Inventory identifier of the firmware disk that stores the VM's vTPM state. This identifier is not cryptographic proof of TPM possession.
 * `is_agent_vm`: Indicates whether the VM is an agent VM or not. When their host enters maintenance mode, once the normal VMs are evacuated, the agent VMs are powered off. When the host is restored, agent VMs are powered on before the normal VMs are restored. In other words, agent VMs cannot be HA-protected or live migrated.
 * `apc_config`: Advanced Processor Compatibility configuration for the VM. Enabling this retains the CPU model for the VM across power cycles and migrations.
 * `storage_config`: Storage configuration for VM.
