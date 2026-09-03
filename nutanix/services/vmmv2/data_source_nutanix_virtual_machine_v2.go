@@ -663,6 +663,10 @@ func DatasourceNutanixVirtualMachineV4() *schema.Resource {
 					},
 				},
 			},
+			"vtpm_disk_id": {
+				Type:     schema.TypeString,
+				Computed: true,
+			},
 			"is_agent_vm": {
 				Type:     schema.TypeBool,
 				Computed: true,
@@ -1271,6 +1275,9 @@ func DatasourceNutanixVirtualMachineV4Read(ctx context.Context, d *schema.Resour
 		return diag.FromErr(err)
 	}
 	if err := d.Set("vtpm_config", flattenVtpmConfig(getResp.VtpmConfig)); err != nil {
+		return diag.FromErr(err)
+	}
+	if err := d.Set("vtpm_disk_id", flattenVtpmDiskExtID(getResp.VtpmConfig)); err != nil {
 		return diag.FromErr(err)
 	}
 	if err := d.Set("is_agent_vm", getResp.IsAgentVm); err != nil {
@@ -2034,6 +2041,14 @@ func flattenVtpmConfig(pr *config.VtpmConfig) []map[string]interface{} {
 		return vtpmList
 	}
 	return nil
+}
+
+func flattenVtpmDiskExtID(pr *config.VtpmConfig) string {
+	if pr == nil || pr.VtpmDevice == nil || pr.VtpmDevice.DiskExtId == nil {
+		return ""
+	}
+
+	return *pr.VtpmDevice.DiskExtId
 }
 
 func flattenApcConfig(pr *config.ApcConfig) []map[string]interface{} {

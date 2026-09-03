@@ -39,6 +39,31 @@ func TestAccV2NutanixVmsResource_Basic(t *testing.T) {
 	})
 }
 
+func TestAccV2NutanixVmsResource_WithVtpmIdentity(t *testing.T) {
+	r := acctest.RandInt()
+	name := fmt.Sprintf("tf-test-vtpm-vm-%d", r)
+	resource.Test(t, resource.TestCase{
+		PreCheck:  func() { acc.TestAccPreCheck(t) },
+		Providers: acc.TestAccProviders,
+		Steps: []resource.TestStep{
+			{
+				Config: testVmsV4ConfigWithVtpmIdentity(name),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr(resourceNameVms, "machine_type", "Q35"),
+					resource.TestCheckResourceAttr(resourceNameVms, "boot_config.0.uefi_boot.0.is_secure_boot_enabled", "true"),
+					resource.TestCheckResourceAttr(resourceNameVms, "vtpm_config.0.is_vtpm_enabled", "true"),
+					resource.TestCheckResourceAttrSet(resourceNameVms, "vtpm_config.0.version"),
+					resource.TestCheckResourceAttrSet(resourceNameVms, "generation_uuid"),
+					resource.TestCheckResourceAttrSet(resourceNameVms, "bios_uuid"),
+					resource.TestCheckResourceAttrSet(resourceNameVms, "vtpm_disk_id"),
+					resource.TestCheckResourceAttrSet("data.nutanix_virtual_machine_v2.vtpm", "vtpm_disk_id"),
+					resource.TestCheckResourceAttrPair(resourceNameVms, "vtpm_disk_id", "data.nutanix_virtual_machine_v2.vtpm", "vtpm_disk_id"),
+				),
+			},
+		},
+	})
+}
+
 func TestAccV2NutanixVmsResource_BasicUpdate(t *testing.T) {
 	r := acctest.RandInt()
 	desc := "test vm description"
@@ -1635,6 +1660,47 @@ func testVmsV4ConfigWithUEFIBoot(name, desc string) string {
 			power_state = "OFF"
 		}
 `, name, desc)
+}
+
+func testVmsV4ConfigWithVtpmIdentity(name string) string {
+	return fmt.Sprintf(`
+		data "nutanix_clusters_v2" "clusters" {}
+
+		locals {
+			cluster0 = [
+				for cluster in data.nutanix_clusters_v2.clusters.cluster_entities :
+				cluster.ext_id if cluster.config[0].cluster_function[0] != "PRISM_CENTRAL"
+			][0]
+		}
+
+		resource "nutanix_virtual_machine_v2" "test" {
+			name                 = "%[1]s"
+			description          = "Terraform provider vTPM identity acceptance test"
+			num_cores_per_socket = 1
+			num_sockets          = 1
+			memory_size_bytes    = 1073741824
+			machine_type         = "Q35"
+			power_state          = "OFF"
+
+			cluster {
+				ext_id = local.cluster0
+			}
+
+			boot_config {
+				uefi_boot {
+					is_secure_boot_enabled = true
+				}
+			}
+
+			vtpm_config {
+				is_vtpm_enabled = true
+			}
+		}
+
+		data "nutanix_virtual_machine_v2" "vtpm" {
+			ext_id = nutanix_virtual_machine_v2.test.id
+		}
+`, name)
 }
 
 func testVmsV4ConfigWithUEFIBootUpdate(name, desc string) string {

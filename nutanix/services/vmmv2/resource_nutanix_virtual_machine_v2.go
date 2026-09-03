@@ -645,6 +645,10 @@ func ResourceNutanixVirtualMachineV2() *schema.Resource {
 					},
 				},
 			},
+			"vtpm_disk_id": {
+				Type:     schema.TypeString,
+				Computed: true,
+			},
 			"is_agent_vm": {
 				Type:     schema.TypeBool,
 				Optional: true,
@@ -3745,6 +3749,7 @@ func extractVMConfigFields(getResp config.Vm) (map[string]interface{}, diag.Diag
 	fields["machine_type"] = flattenMachineType(getResp.MachineType)
 	fields["power_state"] = flattenPowerState(getResp.PowerState)
 	fields["vtpm_config"] = flattenVtpmConfig(getResp.VtpmConfig)
+	fields["vtpm_disk_id"] = flattenVtpmDiskExtID(getResp.VtpmConfig)
 	fields["is_agent_vm"] = getResp.IsAgentVm
 	fields["apc_config"] = flattenApcConfig(getResp.ApcConfig)
 	fields["storage_config"] = flattenADSFVmStorageConfig(getResp.StorageConfig)

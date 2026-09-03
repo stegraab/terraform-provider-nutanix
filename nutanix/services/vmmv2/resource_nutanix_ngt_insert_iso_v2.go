@@ -29,6 +29,7 @@ func ResourceNutanixNGTInsertIsoV2() *schema.Resource {
 			"ext_id": {
 				Type:     schema.TypeString,
 				Required: true,
+				ForceNew: true,
 			},
 			"capablities": {
 				Type:     schema.TypeList,
