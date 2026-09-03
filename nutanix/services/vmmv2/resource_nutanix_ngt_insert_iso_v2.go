@@ -288,6 +288,12 @@ func ResourceNutanixNGTInsertIsoV2Delete(ctx context.Context, d *schema.Resource
 			Summary:  "NGT ISO is not inserted on the CD-ROM of the VM or ejected earlier using an action, Ignoring the request to eject the NGT ISO",
 		}}
 	}
+	if isISOInserted, ok := d.GetOk("is_iso_inserted"); !ok || !isISOInserted.(bool) {
+		return diag.Diagnostics{{
+			Severity: diag.Warning,
+			Summary:  "NGT ISO is already ejected, ignoring the request to eject it",
+		}}
+	}
 	return ejectCdromISO(ctx, d, meta)
 }
 
