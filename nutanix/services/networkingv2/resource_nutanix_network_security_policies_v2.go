@@ -121,13 +121,11 @@ func ResourceNutanixNetworkSecurityPolicyV2() *schema.Resource {
 												"src_allow_spec": {
 													Type:         schema.TypeString,
 													Optional:     true,
-													Computed:     true,
 													ValidateFunc: validation.StringInSlice([]string{"ALL", "NONE"}, false),
 												},
 												"dest_allow_spec": {
 													Type:         schema.TypeString,
 													Optional:     true,
-													Computed:     true,
 													ValidateFunc: validation.StringInSlice([]string{"ALL", "NONE"}, false),
 												},
 												"src_category_associated_entity_type": {
