@@ -2,7 +2,6 @@ package iamv2
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -226,8 +225,7 @@ func resourceNutanixUserKeyV2Create(ctx context.Context, d *schema.ResourceData,
 	}
 	getResp := resp.Data.GetValue().(import1.Key)
 
-	aJSON, _ := json.MarshalIndent(getResp, "", "  ")
-	log.Printf("[DEBUG] Created User Key: %s", aJSON)
+	log.Printf("[DEBUG] Created User Key %q (%s)", utils.StringValue(getResp.Name), utils.StringValue(getResp.ExtId))
 	d.SetId(utils.StringValue(getResp.ExtId))
 
 	if err := d.Set("key_details", flattenKeyDetails(getResp.KeyDetails)); err != nil {
@@ -252,8 +250,7 @@ func resourceNutanixUserKeyV2Read(ctx context.Context, d *schema.ResourceData, m
 
 	keyConfig := resp.Data.GetValue().(import1.Key)
 
-	aJSON, _ := json.MarshalIndent(keyConfig, "", "  ")
-	log.Printf("[DEBUG] Retrieved User Key: %s", aJSON)
+	log.Printf("[DEBUG] Retrieved User Key %q (%s)", utils.StringValue(keyConfig.Name), utils.StringValue(keyConfig.ExtId))
 
 	if err := d.Set("tenant_id", keyConfig.TenantId); err != nil {
 		return diag.Errorf("error while setting tenant_id: %v", err)
@@ -302,7 +299,7 @@ func resourceNutanixUserKeyV2Read(ctx context.Context, d *schema.ResourceData, m
 	}
 	readKeyDetails := flattenKeyDetails(keyConfig.KeyDetails)
 	existingKeyDetails := d.Get("key_details")
-	if shouldPreserveExistingObjectKeySecret(readKeyDetails, existingKeyDetails) {
+	if shouldPreserveExistingKeySecret(readKeyDetails, existingKeyDetails) {
 		readKeyDetails = existingKeyDetails
 	}
 	if err := d.Set("key_details", readKeyDetails); err != nil {
@@ -346,8 +343,59 @@ func flattenKeyDetails(oneOfKeyKeyDetails *import1.OneOfKeyKeyDetails) interface
 	return []map[string]interface{}{keyDetailsMap}
 }
 
-func shouldPreserveExistingObjectKeySecret(readKeyDetails interface{}, existingKeyDetails interface{}) bool {
-	return objectKeySecretFromDetails(existingKeyDetails) != "" && objectKeySecretFromDetails(readKeyDetails) == ""
+func shouldPreserveExistingKeySecret(readKeyDetails interface{}, existingKeyDetails interface{}) bool {
+	return keySecretFromDetails(existingKeyDetails) != "" && keySecretFromDetails(readKeyDetails) == ""
+}
+
+func keySecretFromDetails(keyDetails interface{}) string {
+	if apiKey := apiKeySecretFromDetails(keyDetails); apiKey != "" {
+		return apiKey
+	}
+	return objectKeySecretFromDetails(keyDetails)
+}
+
+func apiKeySecretFromDetails(keyDetails interface{}) string {
+	entries, ok := keyDetails.([]interface{})
+	if !ok || len(entries) == 0 {
+		return ""
+	}
+
+	entry, ok := entries[0].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+
+	apiKeyDetailsRaw, ok := entry["api_key_details"]
+	if !ok {
+		return ""
+	}
+
+	apiKeyDetails, ok := apiKeyDetailsRaw.([]interface{})
+	if !ok || len(apiKeyDetails) == 0 {
+		return ""
+	}
+
+	apiKey, ok := apiKeyDetails[0].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+
+	secretRaw, ok := apiKey["api_key"]
+	if !ok || secretRaw == nil {
+		return ""
+	}
+
+	switch s := secretRaw.(type) {
+	case string:
+		return s
+	case *string:
+		if s == nil {
+			return ""
+		}
+		return *s
+	default:
+		return ""
+	}
 }
 
 func objectKeySecretFromDetails(keyDetails interface{}) string {

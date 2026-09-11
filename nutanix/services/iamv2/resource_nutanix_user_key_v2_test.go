@@ -28,6 +28,7 @@ func TestAccV2NutanixUsers_CreateKey(t *testing.T) {
 					resource.TestCheckResourceAttr(resourceNutanixUserKeyV2Create, "expiry_time", expirationTimeFormatted),
 					resource.TestCheckResourceAttr(resourceNutanixUserKeyV2Create, "assigned_to", "user1"),
 					resource.TestCheckResourceAttr(resourceNutanixUserKeyV2Create, "status", "VALID"),
+					resource.TestCheckResourceAttrSet(resourceNutanixUserKeyV2Create, "key_details.0.api_key_details.0.api_key"),
 				),
 			},
 		},

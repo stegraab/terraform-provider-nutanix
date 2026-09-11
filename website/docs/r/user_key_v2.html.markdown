@@ -10,6 +10,11 @@ description: |-
 
 Provides Nutanix resource to Create key of a requested type for a user.
 
+~> Sensitive: API and object key secrets are returned only when the key is
+created. Terraform retains them in state so dependent resources remain
+consistent after refresh. Use an encrypted backend with tightly restricted
+access.
+
 ## Example Usage
 
 ```hcl
