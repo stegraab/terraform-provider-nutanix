@@ -378,6 +378,10 @@ func bucketReplicationJSONEquivalent(leftRaw string, rightRaw string) bool {
 	rightTargetPC, rightHasTargetPC := bucketReplicationTargetPC(right)
 	removeBucketReplicationTargetPC(left)
 	removeBucketReplicationTargetPC(right)
+	if bucketReplicationTargetsEquivalent(left, right) {
+		removeBucketReplicationTargetFQDN(left)
+		removeBucketReplicationTargetFQDN(right)
+	}
 
 	leftWithoutTargetPC, err := json.Marshal(left)
 	if err != nil {
@@ -403,6 +407,45 @@ func bucketReplicationJSONEquivalent(leftRaw string, rightRaw string) bool {
 		return true
 	}
 	return bucketReplicationTargetPCEquivalent(leftTargetPC, rightTargetPC)
+}
+
+func bucketReplicationTargetsEquivalent(left map[string]interface{}, right map[string]interface{}) bool {
+	leftSpec, leftOK := left["spec"].(map[string]interface{})
+	rightSpec, rightOK := right["spec"].(map[string]interface{})
+	if !leftOK || !rightOK {
+		return false
+	}
+
+	leftUUID, leftOK := leftSpec["target_oss_uuid"].(string)
+	rightUUID, rightOK := rightSpec["target_oss_uuid"].(string)
+	if !leftOK || !rightOK || leftUUID == "" || leftUUID != rightUUID {
+		return false
+	}
+
+	leftEndpoints, leftOK := leftSpec["target_endpoint_list"]
+	rightEndpoints, rightOK := rightSpec["target_endpoint_list"]
+	if !leftOK || !rightOK {
+		return false
+	}
+
+	leftEndpointsJSON, err := json.Marshal(leftEndpoints)
+	if err != nil {
+		return false
+	}
+	rightEndpointsJSON, err := json.Marshal(rightEndpoints)
+	if err != nil {
+		return false
+	}
+
+	return bytes.Equal(leftEndpointsJSON, rightEndpointsJSON)
+}
+
+func removeBucketReplicationTargetFQDN(payload map[string]interface{}) {
+	spec, ok := payload["spec"].(map[string]interface{})
+	if !ok {
+		return
+	}
+	delete(spec, "target_oss_fqdn")
 }
 
 func bucketReplicationTargetPC(payload map[string]interface{}) (string, bool) {
