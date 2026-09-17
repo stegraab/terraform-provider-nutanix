@@ -86,6 +86,11 @@ func bucketReplicationHasStaleEndpointConflict(diags diag.Diagnostics) bool {
 		return false
 	}
 
+	staleEndpointMessages := []string{
+		"Unable to register duplicate endpoint with same target",
+		"an endpoint with the same name already exists",
+	}
+
 	for _, item := range diags {
 		if item.Severity != diag.Error {
 			continue
@@ -94,8 +99,10 @@ func bucketReplicationHasStaleEndpointConflict(diags diag.Diagnostics) bool {
 		if item.Detail != "" {
 			msg += " " + item.Detail
 		}
-		if strings.Contains(msg, "Unable to register duplicate endpoint with same target") {
-			return true
+		for _, staleEndpointMessage := range staleEndpointMessages {
+			if strings.Contains(msg, staleEndpointMessage) {
+				return true
+			}
 		}
 	}
 
