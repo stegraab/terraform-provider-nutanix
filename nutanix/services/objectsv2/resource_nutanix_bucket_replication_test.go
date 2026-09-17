@@ -1,6 +1,64 @@
 package objectstoresv2
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
+)
+
+func TestBucketReplicationHasStaleEndpointConflict(t *testing.T) {
+	tests := []struct {
+		name        string
+		diagnostics diag.Diagnostics
+		expected    bool
+	}{
+		{
+			name:        "legacy duplicate target message",
+			diagnostics: diag.Errorf("Unable to register duplicate endpoint with same target"),
+			expected:    true,
+		},
+		{
+			name:        "current duplicate endpoint name message",
+			diagnostics: diag.Errorf("Failed to create/update replication rule. Registering endpoint failed with err: Failed to create new endpoint, an endpoint with the same name already exists: 9"),
+			expected:    true,
+		},
+		{
+			name: "duplicate endpoint message in detail",
+			diagnostics: diag.Diagnostics{
+				{
+					Severity: diag.Error,
+					Summary:  "replication endpoint registration failed",
+					Detail:   "an endpoint with the same name already exists: 9",
+				},
+			},
+			expected: true,
+		},
+		{
+			name:        "unrelated replication failure",
+			diagnostics: diag.Errorf("target object store is unavailable"),
+			expected:    false,
+		},
+		{
+			name: "warning is not a conflict",
+			diagnostics: diag.Diagnostics{
+				{
+					Severity: diag.Warning,
+					Summary:  "an endpoint with the same name already exists",
+				},
+			},
+			expected: false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			actual := bucketReplicationHasStaleEndpointConflict(test.diagnostics)
+			if actual != test.expected {
+				t.Fatalf("bucketReplicationHasStaleEndpointConflict() = %t, expected %t", actual, test.expected)
+			}
+		})
+	}
+}
 
 func TestBucketReplicationJSONEquivalentAllowsCanonicalTargetFQDN(t *testing.T) {
 	actual := `{
