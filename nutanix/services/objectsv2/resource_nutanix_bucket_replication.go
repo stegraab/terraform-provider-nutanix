@@ -11,11 +11,21 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 )
+
+var bucketReplicationMutationLocks sync.Map
+
+func lockBucketReplicationMutation(objectStoreExtID string) func() {
+	lockValue, _ := bucketReplicationMutationLocks.LoadOrStore(objectStoreExtID, &sync.Mutex{})
+	lock := lockValue.(*sync.Mutex)
+	lock.Lock()
+	return lock.Unlock
+}
 
 func ResourceNutanixBucketReplication() *schema.Resource {
 	return &schema.Resource{
@@ -58,6 +68,8 @@ func resourceNutanixBucketReplicationCreate(ctx context.Context, d *schema.Resou
 	objectStoreExtID := d.Get("object_store_ext_id").(string)
 	bucketName := d.Get("bucket_name").(string)
 	replicationRaw := strings.TrimSpace(d.Get("replication_configuration").(string))
+	unlock := lockBucketReplicationMutation(objectStoreExtID)
+	defer unlock()
 
 	if diags := applyBucketReplication(ctx, cfg, objectStoreExtID, bucketName, replicationRaw); diags.HasError() {
 		if !bucketReplicationHasStaleEndpointConflict(diags) {
@@ -120,6 +132,8 @@ func resourceNutanixBucketReplicationUpdate(ctx context.Context, d *schema.Resou
 	oldReplicationRaw, newReplicationRaw := d.GetChange("replication_configuration")
 	oldReplication := strings.TrimSpace(oldReplicationRaw.(string))
 	newReplication := strings.TrimSpace(newReplicationRaw.(string))
+	unlock := lockBucketReplicationMutation(objectStoreExtID)
+	defer unlock()
 
 	if oldReplication == newReplication {
 		return resourceNutanixBucketReplicationRead(ctx, d, meta)
@@ -210,6 +224,8 @@ func resourceNutanixBucketReplicationDelete(ctx context.Context, d *schema.Resou
 	objectStoreExtID := d.Get("object_store_ext_id").(string)
 	bucketName := d.Get("bucket_name").(string)
 	replicationRaw := strings.TrimSpace(d.Get("replication_configuration").(string))
+	unlock := lockBucketReplicationMutation(objectStoreExtID)
+	defer unlock()
 	diags := removeBucketReplication(ctx, cfg, objectStoreExtID, bucketName, replicationRaw)
 	if !diags.HasError() {
 		if waitDiags := waitForBucketReplicationRemoved(ctx, cfg, objectStoreExtID, bucketName); waitDiags.HasError() {
