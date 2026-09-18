@@ -1,10 +1,47 @@
 package objectstoresv2
 
 import (
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 )
+
+func TestBucketReplicationMutationsAreSerializedPerObjectStore(t *testing.T) {
+	const workers = 8
+	var active int32
+	var maxActive int32
+	var waitGroup sync.WaitGroup
+	start := make(chan struct{})
+
+	for range workers {
+		waitGroup.Add(1)
+		go func() {
+			defer waitGroup.Done()
+			<-start
+			unlock := lockBucketReplicationMutation("object-store-1")
+			current := atomic.AddInt32(&active, 1)
+			for {
+				maximum := atomic.LoadInt32(&maxActive)
+				if current <= maximum || atomic.CompareAndSwapInt32(&maxActive, maximum, current) {
+					break
+				}
+			}
+			time.Sleep(time.Millisecond)
+			atomic.AddInt32(&active, -1)
+			unlock()
+		}()
+	}
+
+	close(start)
+	waitGroup.Wait()
+
+	if maxActive != 1 {
+		t.Fatalf("maximum concurrent mutations = %d, expected 1", maxActive)
+	}
+}
 
 func TestBucketReplicationHasStaleEndpointConflict(t *testing.T) {
 	tests := []struct {
