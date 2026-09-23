@@ -646,45 +646,19 @@ func ResourceNutanixNetworkSecurityPolicyV2Read(ctx context.Context, d *schema.R
 		return diag.FromErr(err)
 	}
 
-	// after creating role, operations saved in remote in different order than local
+	// Prism returns rules in a non-deterministic order and adds an unmanaged
+	// outbound default rule. Keep managed rules in Terraform's order.
 	if len(getResp.Rules) > 0 {
-		// read the remote operations and local operations list
-		remoteOperations := flattenNetworkSecurityPolicyRule(getResp.Rules)
+		remoteRules := managedNetworkSecurityPolicyRules(getResp.Rules)
 		localOperations := expandNetworkSecurityPolicyRule(d.Get("rules").([]interface{}))
 
-		// final result for checking if operations are different
-		diff := false
-
-		// convert local operations to string slice
-		localOperationsStr := make([]string, len(localOperations))
-		for i, v := range localOperations {
-			localOperationsStr[i] = common.FlattenPtrEnum(v.Type)
-		}
-
-		log.Printf("[DEBUG] localOperationsStr: %v", localOperationsStr)
-
-		// check if remote operations are different from local operations
-		for _, operation := range remoteOperations {
-			opsType := operation.(map[string]interface{})["type"]
-			offset := indexOf(localOperationsStr, opsType.(string))
-
-			if offset == -1 {
-				log.Printf("[DEBUG] Rules %v not found in local rules", operation)
-				diff = true
-				break
-			}
-		}
-
-		// if operations are different, update local operations
-		if diff {
+		if !sameNetworkSecurityPolicyRuleIdentities(localOperations, remoteRules) {
 			log.Printf("[DEBUG] Rules are different. Updating local rules")
-			if err := d.Set("rules", flattenNetworkSecurityPolicyRule(getResp.Rules)); err != nil {
+			if err := d.Set("rules", flattenNetworkSecurityPolicyRule(remoteRules)); err != nil {
 				return diag.FromErr(err)
 			}
 		} else {
-			// Preserve local rule ordering, but fill schema defaults that are omitted
-			// from state when the API leaves the corresponding enum fields unset.
-			log.Printf("[DEBUG] Rules are same. Normalizing local rules with schema defaults")
+			log.Printf("[DEBUG] Rules are same. Preserving local rule order")
 			if err := d.Set("rules", normalizeNetworkSecurityPolicyRuleDefaults(d.Get("rules").([]interface{}))); err != nil {
 				return diag.FromErr(err)
 			}
@@ -839,21 +813,65 @@ func expandNetworkSecurityPolicyRule(pr []interface{}) []import1.NetworkSecurity
 		for k, v := range pr {
 			val := v.(map[string]interface{})
 			net := import1.NetworkSecurityPolicyRule{}
+			ruleType := ""
 
 			if desc, ok := val["description"]; ok {
 				net.Description = utils.StringPtr(desc.(string))
 			}
 			if ty, ok := val["type"]; ok {
-				net.Type = common.ExpandEnum[import1.RuleType](ty.(string))
+				ruleType = ty.(string)
+				net.Type = common.ExpandEnum[import1.RuleType](ruleType)
 			}
 			if spec, ok := val["spec"]; ok {
-				net.Spec = expandOneOfNetworkSecurityPolicyRuleSpec(spec)
+				net.Spec = expandOneOfNetworkSecurityPolicyRuleSpec(spec, ruleType)
 			}
 			nets[k] = net
 		}
 		return nets
 	}
 	return nil
+}
+
+func sameNetworkSecurityPolicyRuleIdentity(left, right import1.NetworkSecurityPolicyRule) bool {
+	return utils.StringValue(left.Description) == utils.StringValue(right.Description) &&
+		common.FlattenPtrEnum(left.Type) == common.FlattenPtrEnum(right.Type)
+}
+
+func sameNetworkSecurityPolicyRuleIdentities(left, right []import1.NetworkSecurityPolicyRule) bool {
+	if len(left) != len(right) {
+		return false
+	}
+
+	usedRight := make([]bool, len(right))
+	for leftIndex := range left {
+		matched := false
+		for rightIndex := range right {
+			if usedRight[rightIndex] || !sameNetworkSecurityPolicyRuleIdentity(left[leftIndex], right[rightIndex]) {
+				continue
+			}
+
+			usedRight[rightIndex] = true
+			matched = true
+			break
+		}
+		if !matched {
+			return false
+		}
+	}
+
+	return true
+}
+
+func managedNetworkSecurityPolicyRules(rules []import1.NetworkSecurityPolicyRule) []import1.NetworkSecurityPolicyRule {
+	managed := make([]import1.NetworkSecurityPolicyRule, 0, len(rules))
+	for _, rule := range rules {
+		description := utils.StringValue(rule.Description)
+		if description == "Inbound default rule" || description == "Outbound default rule" {
+			continue
+		}
+		managed = append(managed, rule)
+	}
+	return managed
 }
 
 func normalizeNetworkSecurityPolicyRuleDefaults(pr []interface{}) []interface{} {
@@ -949,13 +967,13 @@ func applyDefaultString(target map[string]interface{}, key string, fallback stri
 	}
 }
 
-func expandOneOfNetworkSecurityPolicyRuleSpec(pr interface{}) *import1.OneOfNetworkSecurityPolicyRuleSpec {
+func expandOneOfNetworkSecurityPolicyRuleSpec(pr interface{}, ruleType string) *import1.OneOfNetworkSecurityPolicyRuleSpec {
 	if pr != nil {
 		prI := pr.([]interface{})
 		val := prI[0].(map[string]interface{})
 		policyRules := &import1.OneOfNetworkSecurityPolicyRuleSpec{}
 
-		if isolation, ok := val["two_env_isolation_rule_spec"]; ok && len(isolation.([]interface{})) > 0 {
+		if isolation, ok := val["two_env_isolation_rule_spec"]; ruleType == "TWO_ENV_ISOLATION" && ok && len(isolation.([]interface{})) > 0 {
 			iso := import1.NewTwoEnvIsolationRuleSpec()
 
 			isoI := isolation.([]interface{})
@@ -970,7 +988,7 @@ func expandOneOfNetworkSecurityPolicyRuleSpec(pr interface{}) *import1.OneOfNetw
 			policyRules.SetValue(*iso)
 		}
 
-		if appRule, ok := val["application_rule_spec"]; ok && len(appRule.([]interface{})) > 0 {
+		if appRule, ok := val["application_rule_spec"]; ruleType == "APPLICATION" && ok && len(appRule.([]interface{})) > 0 {
 			app := import1.NewApplicationRuleSpec()
 
 			appI := appRule.([]interface{})
@@ -1046,7 +1064,7 @@ func expandOneOfNetworkSecurityPolicyRuleSpec(pr interface{}) *import1.OneOfNetw
 			policyRules.SetValue(*app)
 		}
 
-		if intraGroup, ok := val["intra_entity_group_rule_spec"]; ok && len(intraGroup.([]interface{})) > 0 {
+		if intraGroup, ok := val["intra_entity_group_rule_spec"]; ruleType == "INTRA_GROUP" && ok && len(intraGroup.([]interface{})) > 0 {
 			intra := import1.NewIntraEntityGroupRuleSpec()
 
 			intraI := intraGroup.([]interface{})
@@ -1079,7 +1097,7 @@ func expandOneOfNetworkSecurityPolicyRuleSpec(pr interface{}) *import1.OneOfNetw
 			policyRules.SetValue(*intra)
 		}
 
-		if multiEnv, ok := val["multi_env_isolation_rule_spec"]; ok && len(multiEnv.([]interface{})) > 0 {
+		if multiEnv, ok := val["multi_env_isolation_rule_spec"]; ruleType == "MULTI_ENV_ISOLATION" && ok && len(multiEnv.([]interface{})) > 0 {
 			multi := import1.NewMultiEnvIsolationRuleSpec()
 
 			multiI := multiEnv.([]interface{})
