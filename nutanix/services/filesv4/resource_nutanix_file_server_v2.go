@@ -981,9 +981,16 @@ func fileServerConfigRefreshFunc(apiClient *filesClient.ApiClient, extID string,
 }
 
 func updateFileServer(ctx context.Context, apiClient *filesClient.ApiClient, d *schema.ResourceData) error {
-	_, _, headers, err := filesRequestWithHeaders(apiClient, http.MethodGet, filesAPIBasePath+"/"+d.Id(), nil, nil)
+	currentResponse, statusCode, headers, err := filesRequestWithHeaders(apiClient, http.MethodGet, filesAPIBasePath+"/"+d.Id(), nil, nil)
 	if err != nil {
 		return fmt.Errorf("error while reading file server %q before update: %w", d.Id(), err)
+	}
+	if statusCode >= http.StatusBadRequest || filesHasError(currentResponse) {
+		return fmt.Errorf("error while reading file server %q before update: %s", d.Id(), filesErrorMessage(currentResponse, statusCode))
+	}
+	current, ok := currentResponse["data"].(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("unexpected file server get response shape")
 	}
 
 	updateHeaders := map[string]string{}
@@ -991,7 +998,7 @@ func updateFileServer(ctx context.Context, apiClient *filesClient.ApiClient, d *
 		updateHeaders["If-Match"] = etag
 	}
 
-	payload := expandFileServerPayload(d)
+	payload := expandFileServerUpdatePayload(d, current)
 	respBody, statusCode, _, err := filesRequestWithHeaders(apiClient, http.MethodPut, filesAPIBasePath+"/"+d.Id(), payload, updateHeaders)
 	if err != nil {
 		return err
@@ -1011,6 +1018,16 @@ func updateFileServer(ctx context.Context, apiClient *filesClient.ApiClient, d *
 
 	_, err = stateConf.WaitForStateContext(ctx)
 	return err
+}
+
+func expandFileServerUpdatePayload(d *schema.ResourceData, current map[string]interface{}) map[string]interface{} {
+	payload := expandFileServerPayload(d)
+	for _, key := range []string{"clusterExtId", "cvmIpAddresses", "externalNetworks", "internalNetworks"} {
+		if value, ok := current[key]; ok {
+			payload[key] = value
+		}
+	}
+	return payload
 }
 
 func getFileServerByName(apiClient *filesClient.ApiClient, name string) (map[string]interface{}, error) {

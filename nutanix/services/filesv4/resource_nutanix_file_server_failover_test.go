@@ -109,6 +109,41 @@ func TestFlattenFileServerReplicationPolicyPreservesConfiguredDirectionDuringFai
 	assertStringState(t, d, "secondary_cluster_ext_id", "dc2")
 }
 
+func TestExpandFileServerUpdatePayloadUsesActivePlacementDuringFailover(t *testing.T) {
+	resourceSchema := ResourceNutanixFileServerV2().Schema
+	d := schema.TestResourceDataRaw(t, resourceSchema, map[string]interface{}{
+		"name":              "files",
+		"cluster_ext_id":    "dc1",
+		"cvm_ip_addresses":  []interface{}{map[string]interface{}{"value": "10.0.0.10"}},
+		"dns_servers":       []interface{}{map[string]interface{}{"value": "10.112.130.12"}},
+		"ntp_servers":       []interface{}{map[string]interface{}{"fqdn": "ntp.example.com"}},
+		"external_networks": []interface{}{map[string]interface{}{"network_ext_id": "dc1-external"}},
+		"internal_networks": []interface{}{map[string]interface{}{"network_ext_id": "dc1-internal"}},
+	})
+	current := map[string]interface{}{
+		"clusterExtId":   "dc2",
+		"cvmIpAddresses": []interface{}{map[string]interface{}{"value": "10.1.0.10"}},
+		"externalNetworks": []interface{}{
+			map[string]interface{}{"networkExtId": "dc2-external"},
+		},
+		"internalNetworks": []interface{}{
+			map[string]interface{}{"networkExtId": "dc2-internal"},
+		},
+	}
+
+	payload := expandFileServerUpdatePayload(d, current)
+
+	if got := payload["clusterExtId"]; got != "dc2" {
+		t.Fatalf("clusterExtId: got %q, want active cluster %q", got, "dc2")
+	}
+	if got := payload["dnsServers"].([]map[string]interface{})[0]["value"]; got != "10.112.130.12" {
+		t.Fatalf("dnsServers: got %q, want configured DNS server", got)
+	}
+	if got := payload["externalNetworks"].([]interface{})[0].(map[string]interface{})["networkExtId"]; got != "dc2-external" {
+		t.Fatalf("externalNetworks: got %q, want active network", got)
+	}
+}
+
 func assertFirstNetworkExtID(t *testing.T, d *schema.ResourceData, key, want string) {
 	t.Helper()
 	networks := d.Get(key).([]interface{})
