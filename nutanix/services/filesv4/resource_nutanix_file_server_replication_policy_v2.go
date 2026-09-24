@@ -493,12 +493,23 @@ func flattenFileServerReplicationPolicyToState(d *schema.ResourceData, item map[
 	if len(config) == 0 {
 		return
 	}
-	_ = d.Set("primary_file_server_ext_id", stringValue(config["primaryFileServerExtId"]))
-	_ = d.Set("secondary_file_server_ext_id", stringValue(config["secondaryFileServerExtId"]))
-	_ = d.Set("primary_cluster_ext_id", stringValue(config["primaryClusterExtId"]))
-	_ = d.Set("secondary_cluster_ext_id", stringValue(config["secondaryClusterExtId"]))
-	_ = d.Set("primary_domain_manager_ext_id", stringValue(config["primaryDomainManagerExtId"]))
-	_ = d.Set("secondary_domain_manager_ext_id", stringValue(config["secondaryDomainManagerExtId"]))
+	activePrimaryClusterExtID := stringValue(config["primaryClusterExtId"])
+	configuredPrimaryClusterExtID, hasConfiguredPrimary := d.GetOk("primary_cluster_ext_id")
+	configuredSecondaryClusterExtID, hasConfiguredSecondary := d.GetOk("secondary_cluster_ext_id")
+	rolesSwapped := d.Id() != "" && hasConfiguredPrimary && hasConfiguredSecondary &&
+		activePrimaryClusterExtID == configuredSecondaryClusterExtID.(string) &&
+		activePrimaryClusterExtID != configuredPrimaryClusterExtID.(string)
+
+	// Metro reports the active side as primary after failover. Preserve the
+	// configured direction so the role swap cannot force policy replacement.
+	if !rolesSwapped {
+		_ = d.Set("primary_file_server_ext_id", stringValue(config["primaryFileServerExtId"]))
+		_ = d.Set("secondary_file_server_ext_id", stringValue(config["secondaryFileServerExtId"]))
+		_ = d.Set("primary_cluster_ext_id", activePrimaryClusterExtID)
+		_ = d.Set("secondary_cluster_ext_id", stringValue(config["secondaryClusterExtId"]))
+		_ = d.Set("primary_domain_manager_ext_id", stringValue(config["primaryDomainManagerExtId"]))
+		_ = d.Set("secondary_domain_manager_ext_id", stringValue(config["secondaryDomainManagerExtId"]))
+	}
 	if witness, ok := config["witness"].(map[string]interface{}); ok {
 		_ = d.Set("witness_ext_id", stringValue(witness["extId"]))
 		if timeout := intValue(witness["timeoutSecs"]); timeout > 0 {

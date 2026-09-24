@@ -653,6 +653,10 @@ func listValuesEqual(current, desired []map[string]interface{}) bool {
 }
 
 func flattenFileServerToState(d *schema.ResourceData, item map[string]interface{}) {
+	activeClusterExtID := stringValue(item["clusterExtId"])
+	configuredClusterExtID, hasConfiguredCluster := d.GetOk("cluster_ext_id")
+	isActiveOnRecoveryCluster := d.Id() != "" && hasConfiguredCluster && activeClusterExtID != "" && configuredClusterExtID.(string) != activeClusterExtID
+
 	if extID := stringValue(item["extId"]); extID != "" {
 		d.SetId(extID)
 		_ = d.Set("ext_id", extID)
@@ -666,10 +670,15 @@ func flattenFileServerToState(d *schema.ResourceData, item map[string]interface{
 	_ = d.Set("memory_gib", intValue(item["memoryGib"]))
 	_ = d.Set("vcpus", intValue(item["vcpus"]))
 	_ = d.Set("version", stringValue(item["version"]))
-	_ = d.Set("cvm_ip_addresses", flattenValueList(item["cvmIpAddresses"]))
-	_ = d.Set("cluster_ext_id", stringValue(item["clusterExtId"]))
-	_ = d.Set("external_networks", flattenNetworks(d, "external_networks", item["externalNetworks"]))
-	_ = d.Set("internal_networks", flattenNetworks(d, "internal_networks", item["internalNetworks"]))
+	// A Metro failover makes the Files API report the recovery cluster and its
+	// placement as active. Keep the configured home placement in state so an
+	// operational role swap cannot plan a destructive server replacement.
+	if !isActiveOnRecoveryCluster {
+		_ = d.Set("cvm_ip_addresses", flattenValueList(item["cvmIpAddresses"]))
+		_ = d.Set("cluster_ext_id", activeClusterExtID)
+		_ = d.Set("external_networks", flattenNetworks(d, "external_networks", item["externalNetworks"]))
+		_ = d.Set("internal_networks", flattenNetworks(d, "internal_networks", item["internalNetworks"]))
+	}
 	_ = d.Set("deployment_status", stringValue(item["deploymentStatus"]))
 	_ = d.Set("external_ip_addresses", flattenNetworkIPAddresses(item["externalNetworks"]))
 	_ = d.Set("vms", flattenFileServerVMs(item["vms"]))
