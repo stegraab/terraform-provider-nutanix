@@ -3,6 +3,7 @@ package objectstoresv2
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -10,21 +11,45 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 )
 
 var bucketReplicationMutationLocks sync.Map
 
-func lockBucketReplicationMutation(objectStoreExtID string) func() {
-	lockValue, _ := bucketReplicationMutationLocks.LoadOrStore(objectStoreExtID, &sync.Mutex{})
+func lockBucketReplicationMutation(ctx context.Context, host, objectStoreExtID string) (func(), error) {
+	lockKey := host + "\x00" + objectStoreExtID
+	lockValue, _ := bucketReplicationMutationLocks.LoadOrStore(lockKey, &sync.Mutex{})
 	lock := lockValue.(*sync.Mutex)
 	lock.Lock()
-	return lock.Unlock
+
+	fileLock := flock.New(bucketReplicationMutationLockPath(host, objectStoreExtID))
+	locked, err := fileLock.TryLockContext(ctx, 100*time.Millisecond)
+	if err != nil {
+		lock.Unlock()
+		return nil, fmt.Errorf("acquiring object replication mutation lock: %w", err)
+	}
+	if !locked {
+		lock.Unlock()
+		return nil, fmt.Errorf("acquiring object replication mutation lock: %w", ctx.Err())
+	}
+
+	return func() {
+		_ = fileLock.Unlock()
+		lock.Unlock()
+	}, nil
+}
+
+func bucketReplicationMutationLockPath(host, objectStoreExtID string) string {
+	lockKey := sha256.Sum256([]byte(host + "\x00" + objectStoreExtID))
+	return filepath.Join(os.TempDir(), fmt.Sprintf("terraform-provider-nutanix-object-replication-%x.lock", lockKey))
 }
 
 func ResourceNutanixBucketReplication() *schema.Resource {
@@ -68,7 +93,10 @@ func resourceNutanixBucketReplicationCreate(ctx context.Context, d *schema.Resou
 	objectStoreExtID := d.Get("object_store_ext_id").(string)
 	bucketName := d.Get("bucket_name").(string)
 	replicationRaw := strings.TrimSpace(d.Get("replication_configuration").(string))
-	unlock := lockBucketReplicationMutation(objectStoreExtID)
+	unlock, err := lockBucketReplicationMutation(ctx, cfg.Host, objectStoreExtID)
+	if err != nil {
+		return diag.FromErr(err)
+	}
 	defer unlock()
 
 	if diags := applyBucketReplication(ctx, cfg, objectStoreExtID, bucketName, replicationRaw); diags.HasError() {
@@ -132,7 +160,10 @@ func resourceNutanixBucketReplicationUpdate(ctx context.Context, d *schema.Resou
 	oldReplicationRaw, newReplicationRaw := d.GetChange("replication_configuration")
 	oldReplication := strings.TrimSpace(oldReplicationRaw.(string))
 	newReplication := strings.TrimSpace(newReplicationRaw.(string))
-	unlock := lockBucketReplicationMutation(objectStoreExtID)
+	unlock, err := lockBucketReplicationMutation(ctx, cfg.Host, objectStoreExtID)
+	if err != nil {
+		return diag.FromErr(err)
+	}
 	defer unlock()
 
 	if oldReplication == newReplication {
@@ -224,7 +255,10 @@ func resourceNutanixBucketReplicationDelete(ctx context.Context, d *schema.Resou
 	objectStoreExtID := d.Get("object_store_ext_id").(string)
 	bucketName := d.Get("bucket_name").(string)
 	replicationRaw := strings.TrimSpace(d.Get("replication_configuration").(string))
-	unlock := lockBucketReplicationMutation(objectStoreExtID)
+	unlock, err := lockBucketReplicationMutation(ctx, cfg.Host, objectStoreExtID)
+	if err != nil {
+		return diag.FromErr(err)
+	}
 	defer unlock()
 	diags := removeBucketReplication(ctx, cfg, objectStoreExtID, bucketName, replicationRaw)
 	if !diags.HasError() {
