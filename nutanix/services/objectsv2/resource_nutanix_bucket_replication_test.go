@@ -1,6 +1,12 @@
 package objectstoresv2
 
 import (
+	"bufio"
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -21,7 +27,11 @@ func TestBucketReplicationMutationsAreSerializedPerObjectStore(t *testing.T) {
 		go func() {
 			defer waitGroup.Done()
 			<-start
-			unlock := lockBucketReplicationMutation("object-store-1")
+			unlock, err := lockBucketReplicationMutation(context.Background(), "pc.example.com", "object-store-1")
+			if err != nil {
+				t.Errorf("lockBucketReplicationMutation() error = %v", err)
+				return
+			}
 			current := atomic.AddInt32(&active, 1)
 			for {
 				maximum := atomic.LoadInt32(&maxActive)
@@ -41,6 +51,95 @@ func TestBucketReplicationMutationsAreSerializedPerObjectStore(t *testing.T) {
 	if maxActive != 1 {
 		t.Fatalf("maximum concurrent mutations = %d, expected 1", maxActive)
 	}
+}
+
+func TestBucketReplicationMutationLockPathIsNamespaced(t *testing.T) {
+	first := bucketReplicationMutationLockPath("pc-1.example.com", "object-store-1")
+	second := bucketReplicationMutationLockPath("pc-2.example.com", "object-store-1")
+	third := bucketReplicationMutationLockPath("pc-1.example.com", "object-store-2")
+
+	if first == second || first == third || second == third {
+		t.Fatal("expected each Prism Central and object store pair to have a distinct lock path")
+	}
+	if filepath.Dir(first) != filepath.Clean(filepath.Dir(first)) {
+		t.Fatalf("lock path directory %q is not clean", filepath.Dir(first))
+	}
+}
+
+func TestBucketReplicationMutationsAreSerializedAcrossProcesses(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	const host = "cross-process.pc.example.com"
+	const objectStoreExtID = "cross-process-object-store"
+	unlock, err := lockBucketReplicationMutation(ctx, host, objectStoreExtID)
+	if err != nil {
+		t.Fatalf("lockBucketReplicationMutation() error = %v", err)
+	}
+	locked := true
+	defer func() {
+		if locked {
+			unlock()
+		}
+	}()
+
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestBucketReplicationMutationLockHelper$")
+	cmd.Env = append(os.Environ(), "NUTANIX_REPLICATION_LOCK_HELPER=1")
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("StdoutPipe() error = %v", err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("starting helper process: %v", err)
+	}
+
+	scanner := bufio.NewScanner(stdout)
+	if !scanner.Scan() || scanner.Text() != "ready" {
+		t.Fatalf("helper did not become ready: %q", scanner.Text())
+	}
+
+	acquired := make(chan string, 1)
+	go func() {
+		if scanner.Scan() {
+			acquired <- scanner.Text()
+			return
+		}
+		acquired <- ""
+	}()
+
+	select {
+	case output := <-acquired:
+		t.Fatalf("helper acquired the inter-process lock before release: %q", output)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	unlock()
+	locked = false
+	select {
+	case output := <-acquired:
+		if output != "acquired" {
+			t.Fatalf("unexpected helper output after lock release: %q", output)
+		}
+	case <-ctx.Done():
+		t.Fatal("helper did not acquire the inter-process lock after release")
+	}
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("helper process failed: %v", err)
+	}
+}
+
+func TestBucketReplicationMutationLockHelper(t *testing.T) {
+	if os.Getenv("NUTANIX_REPLICATION_LOCK_HELPER") != "1" {
+		return
+	}
+
+	fmt.Println("ready")
+	unlock, err := lockBucketReplicationMutation(context.Background(), "cross-process.pc.example.com", "cross-process-object-store")
+	if err != nil {
+		t.Fatalf("lockBucketReplicationMutation() error = %v", err)
+	}
+	defer unlock()
+	fmt.Println("acquired")
 }
 
 func TestBucketReplicationHasStaleEndpointConflict(t *testing.T) {

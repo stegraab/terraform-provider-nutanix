@@ -5,6 +5,7 @@ go 1.25.3
 require (
 	github.com/PaesslerAG/jsonpath v0.1.1
 	github.com/client9/misspell v0.3.4
+	github.com/gofrs/flock v0.0.0-20190320160742-5135e617513b
 	github.com/golangci/golangci-lint v1.25.0
 	github.com/hashicorp/go-cty v1.4.1-0.20200414143053-d3edf31b6320
 	github.com/hashicorp/go-uuid v1.0.2
@@ -50,7 +51,6 @@ require (
 	github.com/go-toolsmith/strparse v1.0.0 // indirect
 	github.com/go-toolsmith/typep v1.0.0 // indirect
 	github.com/gobwas/glob v0.2.3 // indirect
-	github.com/gofrs/flock v0.0.0-20190320160742-5135e617513b // indirect
 	github.com/gogo/protobuf v1.2.1 // indirect
 	github.com/golang/protobuf v1.4.2 // indirect
 	github.com/golangci/check v0.0.0-20180506172741-cfe4005ccda2 // indirect
