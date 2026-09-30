@@ -3,6 +3,7 @@ package objectstoresv2
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -193,6 +194,119 @@ func TestBucketReplicationHasStaleEndpointConflict(t *testing.T) {
 				t.Fatalf("bucketReplicationHasStaleEndpointConflict() = %t, expected %t", actual, test.expected)
 			}
 		})
+	}
+}
+
+func TestBucketReplicationStaleTargetOSSUUID(t *testing.T) {
+	const staleUUID = "11111111-2222-3333-4444-555555555555"
+	tests := []struct {
+		name        string
+		diagnostics diag.Diagnostics
+		expected    string
+		found       bool
+	}{
+		{
+			name:        "uuid in summary",
+			diagnostics: diag.Errorf("Endpoint exists with different targetOssUuid: %s. Unable to register duplicate endpoint with same target", staleUUID),
+			expected:    staleUUID,
+			found:       true,
+		},
+		{
+			name: "uuid in detail",
+			diagnostics: diag.Diagnostics{
+				{
+					Severity: diag.Error,
+					Summary:  "endpoint registration failed",
+					Detail:   "different targetOssUuid: aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+				},
+			},
+			expected: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+			found:    true,
+		},
+		{
+			name:        "name conflict without uuid",
+			diagnostics: diag.Errorf("an endpoint with the same name already exists: 9"),
+			found:       false,
+		},
+		{
+			name: "warning is ignored",
+			diagnostics: diag.Diagnostics{
+				{
+					Severity: diag.Warning,
+					Summary:  "different targetOssUuid: " + staleUUID,
+				},
+			},
+			found: false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			actual, found := bucketReplicationStaleTargetOSSUUID(test.diagnostics)
+			if found != test.found || actual != test.expected {
+				t.Fatalf("bucketReplicationStaleTargetOSSUUID() = %q, %t; expected %q, %t", actual, found, test.expected, test.found)
+			}
+		})
+	}
+}
+
+func TestBucketReplicationPayloadWithTargetOSSUUID(t *testing.T) {
+	const replication = `{"api_version":"3.0","spec":{"target_oss_uuid":"current-uuid","target_oss_fqdn":"objects.example.com"}}`
+
+	payload, err := bucketReplicationPayloadWithTargetOSSUUID(replication, "stale-uuid")
+	if err != nil {
+		t.Fatalf("bucketReplicationPayloadWithTargetOSSUUID() error = %v", err)
+	}
+
+	var actual map[string]interface{}
+	if err := json.Unmarshal(payload, &actual); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	spec := actual["spec"].(map[string]interface{})
+	if spec["target_oss_uuid"] != "stale-uuid" {
+		t.Fatalf("target_oss_uuid = %q, expected stale-uuid", spec["target_oss_uuid"])
+	}
+	if spec["target_oss_fqdn"] != "objects.example.com" {
+		t.Fatalf("target_oss_fqdn = %q, expected objects.example.com", spec["target_oss_fqdn"])
+	}
+}
+
+func TestBucketReplicationRemovePayloadAddsTargetPC(t *testing.T) {
+	const replication = `{"api_version":"3.0","spec":{"op_mode":"Append","target_oss_uuid":"target-uuid"}}`
+
+	payload, err := bucketReplicationRemovePayload(replication, "pc.example.com")
+	if err != nil {
+		t.Fatalf("bucketReplicationRemovePayload() error = %v", err)
+	}
+
+	var actual map[string]interface{}
+	if err := json.Unmarshal(payload, &actual); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	spec := actual["spec"].(map[string]interface{})
+	if spec["op_mode"] != "Remove" {
+		t.Fatalf("op_mode = %q, expected Remove", spec["op_mode"])
+	}
+	if spec["target_pc"] != "pc.example.com" {
+		t.Fatalf("target_pc = %q, expected pc.example.com", spec["target_pc"])
+	}
+}
+
+func TestBucketReplicationRemovePayloadPreservesTargetPC(t *testing.T) {
+	const replication = `{"api_version":"3.0","spec":{"target_pc":"configured.example.com"}}`
+
+	payload, err := bucketReplicationRemovePayload(replication, "provider.example.com")
+	if err != nil {
+		t.Fatalf("bucketReplicationRemovePayload() error = %v", err)
+	}
+
+	var actual map[string]interface{}
+	if err := json.Unmarshal(payload, &actual); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	spec := actual["spec"].(map[string]interface{})
+	if spec["target_pc"] != "configured.example.com" {
+		t.Fatalf("target_pc = %q, expected configured.example.com", spec["target_pc"])
 	}
 }
 

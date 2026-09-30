@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +24,8 @@ import (
 )
 
 var bucketReplicationMutationLocks sync.Map
+
+var staleTargetOSSUUIDPattern = regexp.MustCompile(`(?i)different targetOssUuid:\s*([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})`)
 
 func lockBucketReplicationMutation(ctx context.Context, host, objectStoreExtID string) (func(), error) {
 	lockKey := host + "\x00" + objectStoreExtID
@@ -103,7 +106,15 @@ func resourceNutanixBucketReplicationCreate(ctx context.Context, d *schema.Resou
 		if !bucketReplicationHasStaleEndpointConflict(diags) {
 			return diags
 		}
-		if removeDiags := removeBucketReplication(ctx, cfg, objectStoreExtID, bucketName, replicationRaw); removeDiags.HasError() {
+		cleanupReplicationRaw := replicationRaw
+		if staleTargetOSSUUID, ok := bucketReplicationStaleTargetOSSUUID(diags); ok {
+			cleanupPayload, err := bucketReplicationPayloadWithTargetOSSUUID(replicationRaw, staleTargetOSSUUID)
+			if err != nil {
+				return diag.FromErr(err)
+			}
+			cleanupReplicationRaw = string(cleanupPayload)
+		}
+		if removeDiags := removeBucketReplication(ctx, cfg, objectStoreExtID, bucketName, cleanupReplicationRaw); removeDiags.HasError() {
 			return diags
 		}
 		if waitDiags := waitForBucketReplicationRemoved(ctx, cfg, objectStoreExtID, bucketName); waitDiags.HasError() {
@@ -147,6 +158,24 @@ func bucketReplicationHasStaleEndpointConflict(diags diag.Diagnostics) bool {
 	}
 
 	return false
+}
+
+func bucketReplicationStaleTargetOSSUUID(diags diag.Diagnostics) (string, bool) {
+	for _, item := range diags {
+		if item.Severity != diag.Error {
+			continue
+		}
+		message := item.Summary
+		if item.Detail != "" {
+			message += " " + item.Detail
+		}
+		match := staleTargetOSSUUIDPattern.FindStringSubmatch(message)
+		if len(match) == 2 {
+			return match[1], true
+		}
+	}
+
+	return "", false
 }
 
 func resourceNutanixBucketReplicationUpdate(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
@@ -299,7 +328,7 @@ func applyBucketReplication(ctx context.Context, cfg *objectStoreProxyConfig, ob
 
 func removeBucketReplication(ctx context.Context, cfg *objectStoreProxyConfig, objectStoreExtID, bucketName, replicationRaw string) diag.Diagnostics {
 	endpoint := bucketReplicationEndpoint(objectStoreExtID, bucketName)
-	replicationRemove, err := bucketReplicationRemovePayload(replicationRaw)
+	replicationRemove, err := bucketReplicationRemovePayload(replicationRaw, cfg.Host)
 	if err != nil {
 		return diag.FromErr(err)
 	}
@@ -577,7 +606,22 @@ func valueOrDefault(value interface{}, defaultValue interface{}) interface{} {
 	return value
 }
 
-func bucketReplicationRemovePayload(replicationRaw string) ([]byte, error) {
+func bucketReplicationPayloadWithTargetOSSUUID(replicationRaw, targetOSSUUID string) ([]byte, error) {
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(replicationRaw), &payload); err != nil {
+		return nil, fmt.Errorf("invalid bucket replication JSON: %w", err)
+	}
+
+	spec, ok := payload["spec"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("invalid bucket replication JSON: spec must be an object")
+	}
+	spec["target_oss_uuid"] = targetOSSUUID
+
+	return json.Marshal(payload)
+}
+
+func bucketReplicationRemovePayload(replicationRaw, targetPC string) ([]byte, error) {
 	var payload map[string]interface{}
 	if err := json.Unmarshal([]byte(replicationRaw), &payload); err != nil {
 		return nil, fmt.Errorf("invalid bucket replication JSON: %w", err)
@@ -589,6 +633,9 @@ func bucketReplicationRemovePayload(replicationRaw string) ([]byte, error) {
 		payload["spec"] = spec
 	}
 	spec["op_mode"] = "Remove"
+	if currentTargetPC, ok := spec["target_pc"].(string); !ok || strings.TrimSpace(currentTargetPC) == "" {
+		spec["target_pc"] = targetPC
+	}
 
 	return json.Marshal(payload)
 }
