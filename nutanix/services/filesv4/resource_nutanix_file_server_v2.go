@@ -13,12 +13,18 @@ import (
 	"strings"
 	"time"
 
+	version "github.com/hashicorp/go-version"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
+	lcmCommon "github.com/nutanix/ntnx-api-golang-clients/lifecycle-go-client/v4/models/lifecycle/v4/common"
+	lcmResources "github.com/nutanix/ntnx-api-golang-clients/lifecycle-go-client/v4/models/lifecycle/v4/resources"
+	taskRef "github.com/nutanix/ntnx-api-golang-clients/lifecycle-go-client/v4/models/prism/v4/config"
 	conns "github.com/terraform-providers/terraform-provider-nutanix/nutanix"
+	providerCommon "github.com/terraform-providers/terraform-provider-nutanix/nutanix/common"
 	filesClient "github.com/terraform-providers/terraform-provider-nutanix/nutanix/sdks/v4/files"
+	"github.com/terraform-providers/terraform-provider-nutanix/utils"
 )
 
 const filesAPIBasePath = "/api/files/v4.0.a6/config/file-servers"
@@ -37,6 +43,7 @@ func ResourceNutanixFileServerV2() *schema.Resource {
 		},
 		Timeouts: &schema.ResourceTimeout{
 			Create: schema.DefaultTimeout(2 * time.Hour),
+			Update: schema.DefaultTimeout(4 * time.Hour),
 			Delete: schema.DefaultTimeout(2 * time.Hour),
 		},
 		Schema: map[string]*schema.Schema{
@@ -107,7 +114,6 @@ func ResourceNutanixFileServerV2() *schema.Resource {
 			"version": {
 				Type:     schema.TypeString,
 				Required: true,
-				ForceNew: true,
 			},
 			"cvm_ip_addresses": {
 				Type:     schema.TypeList,
@@ -414,6 +420,12 @@ func resourceNutanixFileServerV2Update(ctx context.Context, d *schema.ResourceDa
 		return diag.Errorf("files api client is not initialized")
 	}
 
+	if d.HasChange("version") {
+		if err := upgradeFileServerVersion(ctx, d, meta); err != nil {
+			return diag.Errorf("error while upgrading file server %q: %v", d.Id(), err)
+		}
+	}
+
 	if d.HasChanges("dns_servers", "ntp_servers") {
 		if err := updateFileServer(ctx, apiClient, d); err != nil {
 			return diag.Errorf("error while updating file server %q: %v", d.Id(), err)
@@ -427,6 +439,156 @@ func resourceNutanixFileServerV2Update(ctx context.Context, d *schema.ResourceDa
 	}
 
 	return resourceNutanixFileServerV2Read(ctx, d, meta)
+}
+
+func upgradeFileServerVersion(ctx context.Context, d *schema.ResourceData, meta interface{}) error {
+	currentRaw, targetRaw := d.GetChange("version")
+	currentVersion := currentRaw.(string)
+	targetVersion := targetRaw.(string)
+	shouldUpgrade, err := validateFileServerVersionUpdate(currentVersion, targetVersion)
+	if err != nil {
+		return err
+	}
+	if !shouldUpgrade {
+		return nil
+	}
+
+	client := meta.(*conns.Client)
+	entity, err := findFileServerLCMEntity(client, d.Get("name").(string))
+	if err != nil {
+		return err
+	}
+	if entityVersion := utils.StringValue(entity.EntityVersion); entityVersion != currentVersion {
+		return fmt.Errorf("LCM reports version %q, but Terraform state reports %q", entityVersion, currentVersion)
+	}
+
+	entityUUID := utils.StringValue(entity.ExtId)
+	clusterExtID := utils.StringValue(entity.ClusterExtId)
+	if entityUUID == "" || clusterExtID == "" {
+		return fmt.Errorf("LCM entity for file server %q is missing its entity or cluster identifier", d.Get("name").(string))
+	}
+
+	updateSpec := lcmCommon.EntityUpdateSpec{
+		EntityUuid: utils.StringPtr(entityUUID),
+		ToVersion:  utils.StringPtr(targetVersion),
+	}
+	precheckSpec := lcmCommon.NewPrechecksSpec()
+	precheckSpec.EntityUpdateSpecs = []lcmCommon.EntityUpdateSpec{updateSpec}
+	precheckResponse, err := client.LcmAPI.LcmPreChecksAPIInstance.PerformPrechecks(precheckSpec, utils.StringPtr(clusterExtID), nil)
+	if err != nil {
+		return fmt.Errorf("performing LCM prechecks: %w", err)
+	}
+	precheckTask, err := fileServerLCMTaskReference(precheckResponse.Data)
+	if err != nil {
+		return fmt.Errorf("reading LCM precheck response: %w", err)
+	}
+	if err := waitForFileServerLCMTask(ctx, client, precheckTask.ExtId, d.Timeout(schema.TimeoutUpdate)); err != nil {
+		return fmt.Errorf("waiting for LCM prechecks: %w", err)
+	}
+
+	upgradeSpec := lcmCommon.NewUpgradeSpec()
+	upgradeSpec.EntityUpdateSpecs = []lcmCommon.EntityUpdateSpec{updateSpec}
+	upgradeResponse, err := client.LcmAPI.LcmUpgradeAPIInstance.PerformUpgrade(upgradeSpec, utils.StringPtr(clusterExtID), nil)
+	if err != nil {
+		return fmt.Errorf("starting LCM upgrade: %w", err)
+	}
+	upgradeTask, err := fileServerLCMTaskReference(upgradeResponse.Data)
+	if err != nil {
+		return fmt.Errorf("reading LCM upgrade response: %w", err)
+	}
+	if err := waitForFileServerLCMTask(ctx, client, upgradeTask.ExtId, d.Timeout(schema.TimeoutUpdate)); err != nil {
+		return fmt.Errorf("waiting for LCM upgrade: %w", err)
+	}
+
+	stateConf := &resource.StateChangeConf{
+		Pending:    []string{"PENDING"},
+		Target:     []string{"UPDATED"},
+		Refresh:    fileServerVersionRefreshFunc(client.FilesAPI.APIClientInstance, d.Id(), targetVersion),
+		Timeout:    d.Timeout(schema.TimeoutUpdate),
+		MinTimeout: 10 * time.Second,
+	}
+	_, err = stateConf.WaitForStateContext(ctx)
+	return err
+}
+
+func validateFileServerVersionUpdate(currentRaw, targetRaw string) (bool, error) {
+	current, err := version.NewVersion(currentRaw)
+	if err != nil {
+		return false, fmt.Errorf("invalid current version %q: %w", currentRaw, err)
+	}
+	target, err := version.NewVersion(targetRaw)
+	if err != nil {
+		return false, fmt.Errorf("invalid target version %q: %w", targetRaw, err)
+	}
+
+	switch target.Compare(current) {
+	case -1:
+		return false, fmt.Errorf("downgrading Nutanix Files from %q to %q is not supported", currentRaw, targetRaw)
+	case 0:
+		return false, nil
+	default:
+		return true, nil
+	}
+}
+
+func findFileServerLCMEntity(client *conns.Client, name string) (*lcmResources.Entity, error) {
+	filter := "entityModel eq 'File Server'"
+	limit := 100
+	response, err := client.LcmAPI.LcmEntitiesAPIInstance.ListEntities(nil, &limit, &filter, nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("listing LCM file server entities: %w", err)
+	}
+	if response.Data == nil {
+		return nil, fmt.Errorf("LCM returned no file server entities")
+	}
+	entities := response.Data.GetValue().([]lcmResources.Entity)
+	for i := range entities {
+		if utils.StringValue(entities[i].DeviceId) == name {
+			return &entities[i], nil
+		}
+	}
+	return nil, fmt.Errorf("LCM entity for file server %q was not found", name)
+}
+
+func fileServerLCMTaskReference(data interface{ GetValue() interface{} }) (taskRef.TaskReference, error) {
+	if data == nil {
+		return taskRef.TaskReference{}, fmt.Errorf("response did not contain task data")
+	}
+	task, ok := data.GetValue().(taskRef.TaskReference)
+	if !ok {
+		return taskRef.TaskReference{}, fmt.Errorf("unexpected task data type %T", data.GetValue())
+	}
+	return task, nil
+}
+
+func waitForFileServerLCMTask(ctx context.Context, client *conns.Client, taskID *string, timeout time.Duration) error {
+	if utils.StringValue(taskID) == "" {
+		return fmt.Errorf("LCM response did not contain a task identifier")
+	}
+	stateConf := &resource.StateChangeConf{
+		Pending: []string{"QUEUED", "RUNNING", "PENDING"},
+		Target:  []string{"SUCCEEDED"},
+		Refresh: providerCommon.TaskStateRefreshPrismTaskGroupFunc(ctx, client.PrismAPI, utils.StringValue(taskID)),
+		Timeout: timeout,
+	}
+	_, err := stateConf.WaitForStateContext(ctx)
+	return err
+}
+
+func fileServerVersionRefreshFunc(apiClient *filesClient.ApiClient, extID, targetVersion string) resource.StateRefreshFunc {
+	return func() (interface{}, string, error) {
+		item, notFound, err := getFileServerByID(apiClient, extID)
+		if err != nil {
+			return nil, "", err
+		}
+		if notFound || item == nil {
+			return nil, "PENDING", nil
+		}
+		if stringValue(item["version"]) == targetVersion {
+			return item, "UPDATED", nil
+		}
+		return item, "PENDING", nil
+	}
 }
 
 func resourceNutanixFileServerV2Delete(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
