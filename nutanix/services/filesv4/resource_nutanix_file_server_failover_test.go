@@ -1,10 +1,52 @@
 package filesv4
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 )
+
+func TestFileServerVersionChangeUpdatesInPlace(t *testing.T) {
+	versionSchema := ResourceNutanixFileServerV2().Schema["version"]
+	if versionSchema.ForceNew {
+		t.Fatal("version changes must use the LCM update workflow instead of replacing the file server")
+	}
+}
+
+func TestValidateFileServerVersionUpdate(t *testing.T) {
+	tests := []struct {
+		name           string
+		current        string
+		target         string
+		wantUpgrade    bool
+		wantErrorMatch string
+	}{
+		{name: "upgrade", current: "5.3.0.2", target: "5.3.0.3", wantUpgrade: true},
+		{name: "same version", current: "5.3.0.3", target: "5.3.0.3"},
+		{name: "downgrade", current: "5.3.0.3", target: "5.3.0.2", wantErrorMatch: "downgrading Nutanix Files"},
+		{name: "invalid current", current: "not-a-version", target: "5.3.0.3", wantErrorMatch: "invalid current version"},
+		{name: "invalid target", current: "5.3.0.2", target: "not-a-version", wantErrorMatch: "invalid target version"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			gotUpgrade, err := validateFileServerVersionUpdate(test.current, test.target)
+			if gotUpgrade != test.wantUpgrade {
+				t.Fatalf("upgrade decision: got %t, want %t", gotUpgrade, test.wantUpgrade)
+			}
+			if test.wantErrorMatch == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), test.wantErrorMatch) {
+				t.Fatalf("error: got %v, want text %q", err, test.wantErrorMatch)
+			}
+		})
+	}
+}
 
 func TestFlattenFileServerToStatePreservesHomePlacementDuringFailover(t *testing.T) {
 	resourceSchema := ResourceNutanixFileServerV2().Schema
