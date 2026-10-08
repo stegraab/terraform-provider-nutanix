@@ -16,8 +16,10 @@ jobs:
           fetch-depth: 0
           ref: main
 
-      - name: Fetch tags
-        run: git fetch --force --tags origin
+      - name: Fetch release tags
+        run: |
+          git fetch --tags origin
+          git fetch --no-tags https://github.com/nutanix/terraform-provider-nutanix.git 'refs/tags/v*:refs/upstream-release-tags/v*'
 
       - name: Compute and create next tag
         id: next_tag
@@ -25,22 +27,25 @@ jobs:
         run: |
           set -euo pipefail
 
-          nearest_tag="$(git describe --tags --abbrev=0)"
-          if [[ "$nearest_tag" =~ ^(v[0-9]+\.[0-9]+\.[0-9]+)(-stegra([.-])[0-9]+)?$ ]]; then
-            base_tag="${BASH_REMATCH[1]}"
-          else
-            echo "Nearest tag '$nearest_tag' is not in expected form vX.Y.Z, vX.Y.Z-stegra.N, or vX.Y.Z-stegra-N"
+          # Old fork tags may be closer to a merge than its upstream release.
+          # Select the highest stable upstream version already included in main.
+          base_tag="$(
+            git for-each-ref --merged=HEAD --sort=-version:refname \
+              --format='%(refname:strip=2)' refs/upstream-release-tags |
+              awk '/^v[0-9]+\.[0-9]+\.[0-9]+$/ && !found {print; found=1}'
+          )"
+          if [[ -z "$base_tag" ]]; then
+            echo "No stable upstream release tag is reachable from main"
             exit 1
           fi
 
           max_n=0
           while IFS= read -r t; do
-            n="${t##*.}"
-            if [[ "$n" == "$t" ]]; then
-              n="${t##*-}"
-            fi
-            if [[ "$n" =~ ^[0-9]+$ ]] && (( n > max_n )); then
-              max_n="$n"
+            if [[ "$t" =~ -stegra[.-]([0-9]+)$ ]]; then
+              n=$((10#${BASH_REMATCH[1]}))
+              if (( n > max_n )); then
+                max_n="$n"
+              fi
             fi
           done < <(
             {
@@ -62,7 +67,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: 1.25.3
+          go-version: "1.25.13"
       - name: Import GPG key
         id: import_gpg
         uses: paultyng/ghaction-import-gpg@v2.1.0

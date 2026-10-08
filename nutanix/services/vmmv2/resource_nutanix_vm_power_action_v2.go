@@ -1,6 +1,8 @@
 package vmmv2
 
 import (
+	sdkvm "github.com/nutanix/ntnx-api-golang-clients/vmm-go-client/v4/models/vmm/v4/request/vm"
+
 	"context"
 	"time"
 
@@ -68,7 +70,7 @@ func ResourceNutanixVMPowerActionV2Read(ctx context.Context, d *schema.ResourceD
 	conn := meta.(*conns.Client).VmmAPI
 	vmExtID := d.Get("ext_id").(string)
 
-	readResp, err := conn.VMAPIInstance.GetVmById(utils.StringPtr(vmExtID))
+	readResp, err := conn.VMAPIInstance.GetVmById(ctx, &sdkvm.GetVmByIdRequest{ExtId: utils.StringPtr(vmExtID)})
 	if err != nil {
 		return diag.Errorf("error while reading VM power state: %v", err)
 	}

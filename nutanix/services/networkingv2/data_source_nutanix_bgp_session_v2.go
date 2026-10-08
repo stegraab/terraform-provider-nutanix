@@ -1,6 +1,8 @@
 package networkingv2
 
 import (
+	sdkbgpsessions "github.com/nutanix/ntnx-api-golang-clients/networking-go-client/v4/models/networking/v4/request/bgpsessions"
+
 	"context"
 	"fmt"
 
@@ -61,7 +63,7 @@ func dataSourceNutanixBgpSessionV2Read(ctx context.Context, d *schema.ResourceDa
 
 	var session *config.BgpSession
 	if extID, ok := d.GetOk("ext_id"); ok {
-		resp, err := conn.BgpSessionsAPIInstance.GetBgpSessionById(utils.StringPtr(extID.(string)))
+		resp, err := conn.BgpSessionsAPIInstance.GetBgpSessionById(ctx, &sdkbgpsessions.GetBgpSessionByIdRequest{ExtId: utils.StringPtr(extID.(string))})
 		if err != nil {
 			return diag.Errorf("error while fetching BGP session %q: %v", extID.(string), err)
 		}
@@ -71,7 +73,7 @@ func dataSourceNutanixBgpSessionV2Read(ctx context.Context, d *schema.ResourceDa
 		}
 		session = &value
 	} else {
-		value, err := findBgpSessionByName(conn, d.Get("name").(string))
+		value, err := findBgpSessionByName(ctx, conn, d.Get("name").(string))
 		if err != nil {
 			return diag.FromErr(err)
 		}
@@ -95,13 +97,13 @@ func dataSourceNutanixBgpSessionV2Read(ctx context.Context, d *schema.ResourceDa
 	return nil
 }
 
-func findBgpSessionByName(conn *networkingClient.Client, name string) (*config.BgpSession, error) {
+func findBgpSessionByName(ctx context.Context, conn *networkingClient.Client, name string) (*config.BgpSession, error) {
 	matches := make([]config.BgpSession, 0, 1)
 	page := 0
 	limit := 100
 
 	for {
-		resp, err := conn.BgpSessionsAPIInstance.ListBgpSessions(&page, &limit, nil, nil, nil)
+		resp, err := conn.BgpSessionsAPIInstance.ListBgpSessions(ctx, &sdkbgpsessions.ListBgpSessionsRequest{Page_: &page, Limit_: &limit, Filter_: nil, Orderby_: nil, Expand_: nil})
 		if err != nil {
 			return nil, fmt.Errorf("error while listing BGP sessions: %w", err)
 		}

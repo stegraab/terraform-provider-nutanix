@@ -1,6 +1,8 @@
 package networkingv2
 
 import (
+	sdkbgpsessions "github.com/nutanix/ntnx-api-golang-clients/networking-go-client/v4/models/networking/v4/request/bgpsessions"
+
 	"context"
 	"time"
 
@@ -74,7 +76,7 @@ func resourceNutanixBgpSessionV2Create(ctx context.Context, d *schema.ResourceDa
 	name := d.Get("name").(string)
 
 	body := expandBgpSession(d)
-	resp, err := conn.BgpSessionsAPIInstance.CreateBgpSession(body)
+	resp, err := conn.BgpSessionsAPIInstance.CreateBgpSession(ctx, &sdkbgpsessions.CreateBgpSessionRequest{Body: body})
 	if err != nil {
 		return diag.Errorf("error while creating BGP session %q: %v", name, err)
 	}
@@ -87,7 +89,7 @@ func resourceNutanixBgpSessionV2Create(ctx context.Context, d *schema.ResourceDa
 		return diag.FromErr(err)
 	}
 
-	created, err := findBgpSessionByName(conn, name)
+	created, err := findBgpSessionByName(ctx, conn, name)
 	if err != nil {
 		return diag.FromErr(err)
 	}
@@ -100,7 +102,7 @@ func resourceNutanixBgpSessionV2Create(ctx context.Context, d *schema.ResourceDa
 
 func resourceNutanixBgpSessionV2Read(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
 	conn := meta.(*conns.Client).NetworkingAPI
-	resp, err := conn.BgpSessionsAPIInstance.GetBgpSessionById(utils.StringPtr(d.Id()))
+	resp, err := conn.BgpSessionsAPIInstance.GetBgpSessionById(ctx, &sdkbgpsessions.GetBgpSessionByIdRequest{ExtId: utils.StringPtr(d.Id())})
 	if err != nil {
 		if isNetworkingNotFoundError(err) {
 			d.SetId("")
@@ -128,7 +130,7 @@ func resourceNutanixBgpSessionV2Read(ctx context.Context, d *schema.ResourceData
 
 func resourceNutanixBgpSessionV2Delete(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
 	conn := meta.(*conns.Client).NetworkingAPI
-	resp, err := conn.BgpSessionsAPIInstance.DeleteBgpSessionById(utils.StringPtr(d.Id()))
+	resp, err := conn.BgpSessionsAPIInstance.DeleteBgpSessionById(ctx, &sdkbgpsessions.DeleteBgpSessionByIdRequest{ExtId: utils.StringPtr(d.Id())})
 	if err != nil {
 		if isNetworkingNotFoundError(err) {
 			d.SetId("")

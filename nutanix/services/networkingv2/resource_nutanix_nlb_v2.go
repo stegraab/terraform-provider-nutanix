@@ -1,6 +1,9 @@
 package networkingv2
 
 import (
+	sdkloadbalancersessions "github.com/nutanix/ntnx-api-golang-clients/networking-go-client/v4/models/networking/v4/request/loadbalancersessions"
+	sdktasks "github.com/nutanix/ntnx-api-golang-clients/prism-go-client/v4/models/prism/v4/request/tasks"
+
 	"context"
 	"crypto/tls"
 	"fmt"
@@ -223,7 +226,7 @@ func resourceNutanixNLBV2Create(ctx context.Context, d *schema.ResourceData, met
 	conn := meta.(*conns.Client).NetworkingAPI
 
 	reqBody := expandNLBSessionFromResourceData(d)
-	resp, err := conn.LoadBalancerSessionsAPIInstance.CreateLoadBalancerSession(reqBody)
+	resp, err := conn.LoadBalancerSessionsAPIInstance.CreateLoadBalancerSession(ctx, &sdkloadbalancersessions.CreateLoadBalancerSessionRequest{Body: reqBody})
 	if err != nil {
 		return diag.Errorf("error while creating load balancer session : %v", err)
 	}
@@ -236,7 +239,7 @@ func resourceNutanixNLBV2Create(ctx context.Context, d *schema.ResourceData, met
 		return diags
 	}
 
-	createdID, err := fetchNLBResourceIDFromTask(meta.(*conns.Client).PrismAPI, taskRef.ExtId)
+	createdID, err := fetchNLBResourceIDFromTask(ctx, meta.(*conns.Client).PrismAPI, taskRef.ExtId)
 	if err != nil {
 		return diag.Errorf("error while fetching created load balancer session ID : %v", err)
 	}
@@ -248,7 +251,7 @@ func resourceNutanixNLBV2Create(ctx context.Context, d *schema.ResourceData, met
 func resourceNutanixNLBV2Read(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
 	conn := meta.(*conns.Client).NetworkingAPI
 
-	resp, err := conn.LoadBalancerSessionsAPIInstance.GetLoadBalancerSessionById(utils.StringPtr(d.Id()), nil)
+	resp, err := conn.LoadBalancerSessionsAPIInstance.GetLoadBalancerSessionById(ctx, &sdkloadbalancersessions.GetLoadBalancerSessionByIdRequest{ExtId: utils.StringPtr(d.Id()), Select_: nil})
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "not found") {
 			d.SetId("")
@@ -277,7 +280,7 @@ func resourceNutanixNLBV2Update(ctx context.Context, d *schema.ResourceData, met
 	headerArgs := map[string]interface{}{
 		"If-Match": utils.StringPtr(eTag),
 	}
-	resp, err := conn.LoadBalancerSessionsAPIInstance.UpdateLoadBalancerSessionById(utils.StringPtr(d.Id()), reqBody, headerArgs)
+	resp, err := conn.LoadBalancerSessionsAPIInstance.UpdateLoadBalancerSessionById(ctx, &sdkloadbalancersessions.UpdateLoadBalancerSessionByIdRequest{ExtId: utils.StringPtr(d.Id()), Body: reqBody}, headerArgs)
 	if err != nil {
 		return diag.Errorf("error while updating load balancer session : %v", err)
 	}
@@ -304,7 +307,7 @@ func resourceNutanixNLBV2Delete(ctx context.Context, d *schema.ResourceData, met
 	headerArgs := map[string]interface{}{
 		"If-Match": utils.StringPtr(eTag),
 	}
-	resp, err := conn.LoadBalancerSessionsAPIInstance.DeleteLoadBalancerSessionById(utils.StringPtr(d.Id()), headerArgs)
+	resp, err := conn.LoadBalancerSessionsAPIInstance.DeleteLoadBalancerSessionById(ctx, &sdkloadbalancersessions.DeleteLoadBalancerSessionByIdRequest{ExtId: utils.StringPtr(d.Id())}, headerArgs)
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "not found") {
 			d.SetId("")
@@ -766,8 +769,8 @@ func extractNLBTaskReference(resp *import1.TaskReferenceApiResponse) (import4.Ta
 	return taskRef, nil
 }
 
-func fetchNLBResourceIDFromTask(taskConn *prismsdk.Client, taskUUID *string) (string, error) {
-	resourceUUID, err := taskConn.TaskRefAPI.GetTaskById(taskUUID, nil)
+func fetchNLBResourceIDFromTask(ctx context.Context, taskConn *prismsdk.Client, taskUUID *string) (string, error) {
+	resourceUUID, err := taskConn.TaskRefAPI.GetTaskById(ctx, &sdktasks.GetTaskByIdRequest{ExtId: taskUUID, Select_: nil})
 	if err != nil {
 		return "", err
 	}

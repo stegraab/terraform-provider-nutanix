@@ -1,6 +1,9 @@
 package vmmv2
 
 import (
+	sdktasks "github.com/nutanix/ntnx-api-golang-clients/prism-go-client/v4/models/prism/v4/request/tasks"
+	sdkvm "github.com/nutanix/ntnx-api-golang-clients/vmm-go-client/v4/models/vmm/v4/request/vm"
+
 	"context"
 	"encoding/json"
 	"fmt"
@@ -199,7 +202,7 @@ func ResourceNutanixVmCdRomV2Create(ctx context.Context, d *schema.ResourceData,
 		body.DiskAddress = expandCdRomAddress(diskAddress)
 	}
 
-	readResp, err := conn.VMAPIInstance.GetVmById(utils.StringPtr(vmExtID))
+	readResp, err := conn.VMAPIInstance.GetVmById(ctx, &sdkvm.GetVmByIdRequest{ExtId: utils.StringPtr(vmExtID)})
 	if err != nil {
 		return diag.Errorf("error while reading vm : %v", err)
 	}
@@ -208,7 +211,7 @@ func ResourceNutanixVmCdRomV2Create(ctx context.Context, d *schema.ResourceData,
 	args := make(map[string]interface{})
 	args["If-Match"] = getEtagHeader(readResp, conn)
 
-	resp, err := conn.VMAPIInstance.CreateCdRom(utils.StringPtr(vmExtID), &body, args)
+	resp, err := conn.VMAPIInstance.CreateCdRom(ctx, &sdkvm.CreateCdRomRequest{VmExtId: utils.StringPtr(vmExtID), Body: &body}, args)
 	if err != nil {
 		return diag.Errorf("error while creating cd-rom : %v", err)
 	}
@@ -228,7 +231,7 @@ func ResourceNutanixVmCdRomV2Create(ctx context.Context, d *schema.ResourceData,
 		return diag.Errorf("error waiting for CD-ROM (%s) to add: %s", utils.StringValue(taskUUID), errWaitTask)
 	}
 
-	taskResp, err := taskconn.TaskRefAPI.GetTaskById(taskUUID, nil)
+	taskResp, err := taskconn.TaskRefAPI.GetTaskById(ctx, &sdktasks.GetTaskByIdRequest{ExtId: taskUUID, Select_: nil})
 	if err != nil {
 		return diag.Errorf("error while fetching CD-ROM create task (%s): %v", utils.StringValue(taskUUID), err)
 	}
@@ -244,7 +247,7 @@ func ResourceNutanixVmCdRomV2Create(ctx context.Context, d *schema.ResourceData,
 		}
 	}
 	if cdromExtID == "" {
-		refreshResp, err := conn.VMAPIInstance.GetVmById(utils.StringPtr(vmExtID))
+		refreshResp, err := conn.VMAPIInstance.GetVmById(ctx, &sdkvm.GetVmByIdRequest{ExtId: utils.StringPtr(vmExtID)})
 		if err != nil {
 			return diag.Errorf("error while re-reading vm after cd-rom create task (%s): %v", utils.StringValue(taskUUID), err)
 		}
@@ -270,7 +273,7 @@ func ResourceNutanixVmCdRomV2Read(ctx context.Context, d *schema.ResourceData, m
 	vmExtID := d.Get("vm_ext_id").(string)
 	extID := d.Get("ext_id").(string)
 
-	readResp, err := conn.VMAPIInstance.GetCdRomById(utils.StringPtr(vmExtID), utils.StringPtr(extID))
+	readResp, err := conn.VMAPIInstance.GetCdRomById(ctx, &sdkvm.GetCdRomByIdRequest{VmExtId: utils.StringPtr(vmExtID), ExtId: utils.StringPtr(extID)})
 	if err != nil {
 		return diag.Errorf("error while reading cd-rom : %v", err)
 	}
@@ -355,14 +358,14 @@ func ResourceNutanixVmCdRomV2Delete(ctx context.Context, d *schema.ResourceData,
 	vmExtID := d.Get("vm_ext_id").(string)
 	extID := d.Get("ext_id").(string)
 
-	readResp, err := conn.VMAPIInstance.GetVmById(utils.StringPtr(vmExtID))
+	readResp, err := conn.VMAPIInstance.GetVmById(ctx, &sdkvm.GetVmByIdRequest{ExtId: utils.StringPtr(vmExtID)})
 	if err != nil {
 		return diag.Errorf("error while reading vm : %v", err)
 	}
 	args := make(map[string]interface{})
 	args["If-Match"] = getEtagHeader(readResp, conn)
 
-	resp, err := conn.VMAPIInstance.DeleteCdRomById(utils.StringPtr(vmExtID), utils.StringPtr(extID), args)
+	resp, err := conn.VMAPIInstance.DeleteCdRomById(ctx, &sdkvm.DeleteCdRomByIdRequest{VmExtId: utils.StringPtr(vmExtID), ExtId: utils.StringPtr(extID)}, args)
 	if err != nil {
 		return diag.Errorf("error while deleting cd-rom : %v", err)
 	}

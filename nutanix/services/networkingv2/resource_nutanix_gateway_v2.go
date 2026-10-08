@@ -1,6 +1,8 @@
 package networkingv2
 
 import (
+	sdkgateways "github.com/nutanix/ntnx-api-golang-clients/networking-go-client/v4/models/networking/v4/request/gateways"
+
 	"context"
 	"fmt"
 	"strings"
@@ -113,7 +115,7 @@ func resourceNutanixGatewayV2Create(ctx context.Context, d *schema.ResourceData,
 	name := d.Get("name").(string)
 
 	body := expandGateway(d)
-	resp, err := conn.GatewaysAPIInstance.CreateGateway(body)
+	resp, err := conn.GatewaysAPIInstance.CreateGateway(ctx, &sdkgateways.CreateGatewayRequest{Body: body})
 	if err != nil {
 		return diag.Errorf("error while creating gateway %q: %v", name, err)
 	}
@@ -126,7 +128,7 @@ func resourceNutanixGatewayV2Create(ctx context.Context, d *schema.ResourceData,
 		return diag.FromErr(err)
 	}
 
-	created, err := findGatewayByName(conn, name)
+	created, err := findGatewayByName(ctx, conn, name)
 	if err != nil {
 		return diag.FromErr(err)
 	}
@@ -139,7 +141,7 @@ func resourceNutanixGatewayV2Create(ctx context.Context, d *schema.ResourceData,
 
 func resourceNutanixGatewayV2Read(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
 	conn := meta.(*conns.Client).NetworkingAPI
-	resp, err := conn.GatewaysAPIInstance.GetGatewayById(utils.StringPtr(d.Id()))
+	resp, err := conn.GatewaysAPIInstance.GetGatewayById(ctx, &sdkgateways.GetGatewayByIdRequest{ExtId: utils.StringPtr(d.Id())})
 	if err != nil {
 		if isNetworkingNotFoundError(err) {
 			d.SetId("")
@@ -168,7 +170,7 @@ func resourceNutanixGatewayV2Read(ctx context.Context, d *schema.ResourceData, m
 
 func resourceNutanixGatewayV2Delete(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
 	conn := meta.(*conns.Client).NetworkingAPI
-	resp, err := conn.GatewaysAPIInstance.DeleteGatewayById(utils.StringPtr(d.Id()))
+	resp, err := conn.GatewaysAPIInstance.DeleteGatewayById(ctx, &sdkgateways.DeleteGatewayByIdRequest{ExtId: utils.StringPtr(d.Id())})
 	if err != nil {
 		if isNetworkingNotFoundError(err) {
 			d.SetId("")
