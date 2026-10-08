@@ -50,13 +50,29 @@ func TestExpandNetworkSecurityPolicyRuleSpecUsesDeclaredRuleType(t *testing.T) {
 		},
 	}
 
-	application := expandOneOfNetworkSecurityPolicyRuleSpec(specWithComputedPlaceholder, "APPLICATION")
+	application := expandOneOfNetworkSecurityPolicyRuleSpec(nil, "rules.0.spec", specWithComputedPlaceholder, "APPLICATION")
 	if _, ok := application.GetValue().(import1.ApplicationRuleSpec); !ok {
 		t.Fatalf("expected APPLICATION rule to expand to ApplicationRuleSpec, got %T", application.GetValue())
 	}
 
-	intraGroup := expandOneOfNetworkSecurityPolicyRuleSpec(specWithComputedPlaceholder, "INTRA_GROUP")
+	intraGroup := expandOneOfNetworkSecurityPolicyRuleSpec(nil, "rules.0.spec", specWithComputedPlaceholder, "INTRA_GROUP")
 	if _, ok := intraGroup.GetValue().(import1.IntraEntityGroupRuleSpec); !ok {
 		t.Fatalf("expected INTRA_GROUP rule to expand to IntraEntityGroupRuleSpec, got %T", intraGroup.GetValue())
+	}
+}
+
+func TestExpandNetworkSecurityPolicyRuleSpecKeepsFlexAndApplicationSeparate(t *testing.T) {
+	spec := []interface{}{map[string]interface{}{
+		"application_rule_spec": []interface{}{map[string]interface{}{"src_allow_spec": "ALL"}},
+		"flex_rule_spec":        []interface{}{map[string]interface{}{"action": "DENY", "direction": "INBOUND"}},
+	}}
+	application := expandOneOfNetworkSecurityPolicyRuleSpec(nil, "rules.0.spec", spec, "APPLICATION")
+	if _, ok := application.GetValue().(import1.ApplicationRuleSpec); !ok {
+		t.Fatalf("computed FLEX placeholder replaced APPLICATION rule: %T", application.GetValue())
+	}
+	flex := expandOneOfNetworkSecurityPolicyRuleSpec(nil, "rules.0.spec", spec, "FLEX")
+	value, ok := flex.GetValue().(import1.FlexRuleSpec)
+	if !ok || common.FlattenPtrEnum(value.Action) != "DENY" {
+		t.Fatalf("FLEX action was not preserved: %#v", flex.GetValue())
 	}
 }

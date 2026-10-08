@@ -1,6 +1,8 @@
 package networkingv2
 
 import (
+	sdkgateways "github.com/nutanix/ntnx-api-golang-clients/networking-go-client/v4/models/networking/v4/request/gateways"
+
 	"context"
 	"fmt"
 
@@ -81,7 +83,7 @@ func dataSourceNutanixGatewayV2Read(ctx context.Context, d *schema.ResourceData,
 
 	var gateway *config.Gateway
 	if extID, ok := d.GetOk("ext_id"); ok {
-		resp, err := conn.GatewaysAPIInstance.GetGatewayById(utils.StringPtr(extID.(string)))
+		resp, err := conn.GatewaysAPIInstance.GetGatewayById(ctx, &sdkgateways.GetGatewayByIdRequest{ExtId: utils.StringPtr(extID.(string))})
 		if err != nil {
 			return diag.Errorf("error while fetching gateway %q: %v", extID.(string), err)
 		}
@@ -91,7 +93,7 @@ func dataSourceNutanixGatewayV2Read(ctx context.Context, d *schema.ResourceData,
 		}
 		gateway = &value
 	} else {
-		value, err := findGatewayByName(conn, d.Get("name").(string))
+		value, err := findGatewayByName(ctx, conn, d.Get("name").(string))
 		if err != nil {
 			return diag.FromErr(err)
 		}
@@ -116,13 +118,13 @@ func dataSourceNutanixGatewayV2Read(ctx context.Context, d *schema.ResourceData,
 	return nil
 }
 
-func findGatewayByName(conn *networkingClient.Client, name string) (*config.Gateway, error) {
+func findGatewayByName(ctx context.Context, conn *networkingClient.Client, name string) (*config.Gateway, error) {
 	matches := make([]config.Gateway, 0, 1)
 	page := 0
 	limit := 100
 
 	for {
-		resp, err := conn.GatewaysAPIInstance.ListGateways(&page, &limit, nil, nil, nil, nil)
+		resp, err := conn.GatewaysAPIInstance.ListGateways(ctx, &sdkgateways.ListGatewaysRequest{Page_: &page, Limit_: &limit, Filter_: nil, Orderby_: nil, Expand_: nil, Select_: nil})
 		if err != nil {
 			return nil, fmt.Errorf("error while listing gateways: %w", err)
 		}

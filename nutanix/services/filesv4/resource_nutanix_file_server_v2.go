@@ -1,6 +1,10 @@
 package filesv4
 
 import (
+	sdkentities "github.com/nutanix/ntnx-api-golang-clients/lifecycle-go-client/v4/models/lifecycle/v4/request/entities"
+	sdkprechecks "github.com/nutanix/ntnx-api-golang-clients/lifecycle-go-client/v4/models/lifecycle/v4/request/prechecks"
+	sdkupgrades "github.com/nutanix/ntnx-api-golang-clients/lifecycle-go-client/v4/models/lifecycle/v4/request/upgrades"
+
 	"bytes"
 	"context"
 	"crypto/tls"
@@ -454,7 +458,7 @@ func upgradeFileServerVersion(ctx context.Context, d *schema.ResourceData, meta 
 	}
 
 	client := meta.(*conns.Client)
-	entity, err := findFileServerLCMEntity(client, d.Get("name").(string))
+	entity, err := findFileServerLCMEntity(ctx, client, d.Get("name").(string))
 	if err != nil {
 		return err
 	}
@@ -474,7 +478,7 @@ func upgradeFileServerVersion(ctx context.Context, d *schema.ResourceData, meta 
 	}
 	precheckSpec := lcmCommon.NewPrechecksSpec()
 	precheckSpec.EntityUpdateSpecs = []lcmCommon.EntityUpdateSpec{updateSpec}
-	precheckResponse, err := client.LcmAPI.LcmPreChecksAPIInstance.PerformPrechecks(precheckSpec, utils.StringPtr(clusterExtID), nil)
+	precheckResponse, err := client.LcmAPI.LcmPreChecksAPIInstance.PerformPrechecks(ctx, &sdkprechecks.PerformPrechecksRequest{Body: precheckSpec, XClusterId: utils.StringPtr(clusterExtID), Dryrun_: nil})
 	if err != nil {
 		return fmt.Errorf("performing LCM prechecks: %w", err)
 	}
@@ -488,7 +492,7 @@ func upgradeFileServerVersion(ctx context.Context, d *schema.ResourceData, meta 
 
 	upgradeSpec := lcmCommon.NewUpgradeSpec()
 	upgradeSpec.EntityUpdateSpecs = []lcmCommon.EntityUpdateSpec{updateSpec}
-	upgradeResponse, err := client.LcmAPI.LcmUpgradeAPIInstance.PerformUpgrade(upgradeSpec, utils.StringPtr(clusterExtID), nil)
+	upgradeResponse, err := client.LcmAPI.LcmUpgradeAPIInstance.PerformUpgrade(ctx, &sdkupgrades.PerformUpgradeRequest{Body: upgradeSpec, XClusterId: utils.StringPtr(clusterExtID), Dryrun_: nil})
 	if err != nil {
 		return fmt.Errorf("starting LCM upgrade: %w", err)
 	}
@@ -531,10 +535,10 @@ func validateFileServerVersionUpdate(currentRaw, targetRaw string) (bool, error)
 	}
 }
 
-func findFileServerLCMEntity(client *conns.Client, name string) (*lcmResources.Entity, error) {
+func findFileServerLCMEntity(ctx context.Context, client *conns.Client, name string) (*lcmResources.Entity, error) {
 	filter := "entityModel eq 'File Server'"
 	limit := 100
-	response, err := client.LcmAPI.LcmEntitiesAPIInstance.ListEntities(nil, &limit, &filter, nil, nil)
+	response, err := client.LcmAPI.LcmEntitiesAPIInstance.ListEntities(ctx, &sdkentities.ListEntitiesRequest{Page_: nil, Limit_: &limit, Filter_: &filter, Orderby_: nil, Select_: nil})
 	if err != nil {
 		return nil, fmt.Errorf("listing LCM file server entities: %w", err)
 	}

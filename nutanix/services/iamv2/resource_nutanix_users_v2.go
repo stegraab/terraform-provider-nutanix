@@ -15,6 +15,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
 	"github.com/nutanix/ntnx-api-golang-clients/iam-go-client/v4/models/common/v1/config"
 	import1 "github.com/nutanix/ntnx-api-golang-clients/iam-go-client/v4/models/iam/v4/authn"
+	import2 "github.com/nutanix/ntnx-api-golang-clients/iam-go-client/v4/models/iam/v4/request/users"
 	conns "github.com/terraform-providers/terraform-provider-nutanix/nutanix"
 	iamclient "github.com/terraform-providers/terraform-provider-nutanix/nutanix/sdks/v4/iam"
 	"github.com/terraform-providers/terraform-provider-nutanix/utils"
@@ -292,7 +293,10 @@ func resourceNutanixUserV2Create(ctx context.Context, d *schema.ResourceData, me
 	aJSON, _ := json.MarshalIndent(spec, "", "  ")
 	log.Printf("[DEBUG] create user spec: %s", aJSON)
 
-	resp, err := conn.UsersAPIInstance.CreateUser(spec)
+	createUserRequest := import2.CreateUserRequest{
+		Body: spec,
+	}
+	resp, err := conn.UsersAPIInstance.CreateUser(ctx, &createUserRequest)
 	if err != nil {
 		return diag.Errorf("error while creating User : %v", err)
 	}
@@ -306,7 +310,10 @@ func resourceNutanixUserV2Create(ctx context.Context, d *schema.ResourceData, me
 func resourceNutanixUserV2Read(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
 	conn := meta.(*conns.Client).IamAPI
 
-	resp, err := conn.UsersAPIInstance.GetUserById(utils.StringPtr(d.Id()))
+	getUserByIdRequest := import2.GetUserByIdRequest{
+		ExtId: utils.StringPtr(d.Id()),
+	}
+	resp, err := conn.UsersAPIInstance.GetUserById(ctx, &getUserByIdRequest)
 	if err != nil {
 		return diag.Errorf("error while fetching user : %v", err)
 	}
@@ -387,7 +394,10 @@ func resourceNutanixUserV2Update(ctx context.Context, d *schema.ResourceData, me
 	conn := meta.(*conns.Client).IamAPI
 
 	// get Resp
-	getResp, er := conn.UsersAPIInstance.GetUserById(utils.StringPtr(d.Id()))
+	getUserByIdRequest := import2.GetUserByIdRequest{
+		ExtId: utils.StringPtr(d.Id()),
+	}
+	getResp, er := conn.UsersAPIInstance.GetUserById(ctx, &getUserByIdRequest)
 	if er != nil {
 		return diag.FromErr(er)
 	}
@@ -494,7 +504,11 @@ func resourceNutanixUserV2Update(ctx context.Context, d *schema.ResourceData, me
 	aJSON, _ := json.MarshalIndent(updateSpec, "", "  ")
 	log.Printf("[DEBUG] update user spec: %s", aJSON)
 
-	updateresp, err := conn.UsersAPIInstance.UpdateUserById(utils.StringPtr(d.Id()), updateSpec, args)
+	updateUserByIdRequest := import2.UpdateUserByIdRequest{
+		ExtId: utils.StringPtr(d.Id()),
+		Body:  updateSpec,
+	}
+	updateresp, err := conn.UsersAPIInstance.UpdateUserById(ctx, &updateUserByIdRequest, args)
 
 	if err != nil {
 		return diag.FromErr(err)
@@ -510,7 +524,7 @@ func resourceNutanixUserV2Update(ctx context.Context, d *schema.ResourceData, me
 func resourceNutanixUserV2Delete(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
 	conn := meta.(*conns.Client).IamAPI
 
-	readResp, err := conn.UsersAPIInstance.GetUserById(utils.StringPtr(d.Id()))
+	readResp, err := conn.UsersAPIInstance.GetUserById(ctx, &import2.GetUserByIdRequest{ExtId: utils.StringPtr(d.Id())})
 	if err != nil {
 		if isUserNotFoundError(err) {
 			d.SetId("")

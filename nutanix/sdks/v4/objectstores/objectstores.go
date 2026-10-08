@@ -15,7 +15,7 @@ import (
 )
 
 type Client struct {
-	ObjectStoresAPIInstance *api.ObjectStoresApi
+	ObjectStoresAPIInstance *api.ObjectStoresServiceApi
 }
 
 // NewObjectStoresClient builds an Objects client that always uses the Prism endpoint
@@ -70,8 +70,9 @@ func NewObjectStoresClient(credentials client.Credentials, cookies []*http.Cooki
 
 		baseClient = pcClient
 	}
+	f := &Client{
+		ObjectStoresAPIInstance: api.NewObjectStoresServiceApi(baseClient),
+	}
 
-	return &Client{
-		ObjectStoresAPIInstance: api.NewObjectStoresApi(baseClient),
-	}, nil
+	return f, nil
 }
