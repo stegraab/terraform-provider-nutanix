@@ -436,6 +436,7 @@ func Provider() *schema.Provider {
 			"nutanix_access_control_policy":                   prism.ResourceNutanixAccessControlPolicy(),
 			"nutanix_project":                                 prism.ResourceNutanixProject(),
 			"nutanix_role":                                    iam.ResourceNutanixRole(),
+			"nutanix_prism_element_user":                      iam.ResourceNutanixPrismElementUser(),
 			"nutanix_user":                                    iam.ResourceNutanixUser(),
 			"nutanix_karbon_cluster":                          nke.ResourceNutanixKarbonCluster(),
 			"nutanix_karbon_private_registry":                 nke.ResourceNutanixKarbonPrivateRegistry(),

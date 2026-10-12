@@ -165,8 +165,8 @@ tools:
 	@echo "make: Installing tools..."
 # 	GO111MODULE=on go install github.com/YakDriver/tfproviderdocs
 	GO111MODULE=on go install github.com/client9/misspell/cmd/misspell@latest
-	# Keep the linter on the workflow's Go 1.25 toolchain. Newer builds compiled
-	# with Go 1.26 cannot safely analyze Go 1.25 standard-library export data.
+	# Build the linter with the workflow's selected Go toolchain so its
+	# standard-library export data matches the code being analyzed.
 	GO111MODULE=on go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.10.1
 	GO111MODULE=on go install github.com/hashicorp/copywrite@latest
 	GO111MODULE=on go install github.com/hashicorp/go-changelog/cmd/changelog-build@latest
