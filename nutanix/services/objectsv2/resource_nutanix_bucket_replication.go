@@ -139,7 +139,6 @@ func bucketReplicationHasStaleEndpointConflict(diags diag.Diagnostics) bool {
 
 	staleEndpointMessages := []string{
 		"Unable to register duplicate endpoint with same target",
-		"an endpoint with the same name already exists",
 	}
 
 	for _, item := range diags {
@@ -318,6 +317,21 @@ func applyBucketReplication(ctx context.Context, cfg *objectStoreProxyConfig, ob
 	respBody, statusCode, err := doObjectStoreProxyRawRequest(ctx, cfg, http.MethodPut, endpoint, "application/json", replicationPayload)
 	if err != nil {
 		return diag.FromErr(err)
+	}
+	// Native Objects endpoints are shared by all buckets on the source store.
+	// An alternate DNS name can miss the lookup yet collide on the target UUID.
+	// Reuse the registered name instead of removing a bucket rule or endpoint.
+	if statusCode >= http.StatusBadRequest && strings.Contains(string(respBody), "an endpoint with the same name already exists") {
+		resolved, resolveErr := bucketReplicationPayloadWithRegisteredTarget(ctx, cfg, objectStoreExtID, replicationPayload)
+		if resolveErr != nil {
+			return diag.Errorf("error applying bucket replication for %q: status %d, response: %s; resolving existing target: %s", bucketName, statusCode, strings.TrimSpace(string(respBody)), resolveErr)
+		}
+		if !bytes.Equal(resolved, replicationPayload) {
+			respBody, statusCode, err = doObjectStoreProxyRawRequest(ctx, cfg, http.MethodPut, endpoint, "application/json", resolved)
+			if err != nil {
+				return diag.FromErr(err)
+			}
+		}
 	}
 	if statusCode != http.StatusOK && statusCode != http.StatusAccepted && statusCode != http.StatusCreated {
 		return diag.Errorf("error applying bucket replication for %q: status %d, response: %s", bucketName, statusCode, strings.TrimSpace(string(respBody)))

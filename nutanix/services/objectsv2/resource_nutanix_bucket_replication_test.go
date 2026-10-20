@@ -157,7 +157,7 @@ func TestBucketReplicationHasStaleEndpointConflict(t *testing.T) {
 		{
 			name:        "current duplicate endpoint name message",
 			diagnostics: diag.Errorf("Failed to create/update replication rule. Registering endpoint failed with err: Failed to create new endpoint, an endpoint with the same name already exists: 9"),
-			expected:    true,
+			expected:    false,
 		},
 		{
 			name: "duplicate endpoint message in detail",
@@ -168,7 +168,7 @@ func TestBucketReplicationHasStaleEndpointConflict(t *testing.T) {
 					Detail:   "an endpoint with the same name already exists: 9",
 				},
 			},
-			expected: true,
+			expected: false,
 		},
 		{
 			name:        "unrelated replication failure",
