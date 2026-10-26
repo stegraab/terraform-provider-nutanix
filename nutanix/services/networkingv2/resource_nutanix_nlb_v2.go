@@ -6,10 +6,11 @@ import (
 
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
@@ -159,14 +160,14 @@ func ResourceNutanixNLBV2() *schema.Resource {
 			},
 			"targets_config": {
 				Type:     schema.TypeList,
-				Required: true,
+				Optional: true,
+				Computed: true,
 				MaxItems: 1,
 				Elem: &schema.Resource{
 					Schema: map[string]*schema.Schema{
 						"nic_targets": {
 							Type:     schema.TypeList,
-							Required: true,
-							MinItems: 1,
+							Optional: true,
 							Elem: &schema.Resource{
 								Schema: map[string]*schema.Schema{
 									"virtual_nic_reference": {
@@ -271,12 +272,17 @@ func resourceNutanixNLBV2Read(ctx context.Context, d *schema.ResourceData, meta 
 func resourceNutanixNLBV2Update(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
 	conn := meta.(*conns.Client).NetworkingAPI
 
-	eTag, err := fetchNLBETag(conn, d.Id())
+	current, eTag, err := fetchNLBSnapshot(ctx, conn, d.Id())
 	if err != nil {
-		return diag.Errorf("error while fetching load balancer session eTag for update : %v", err)
+		return diag.Errorf("error while fetching load balancer session for update : %v", err)
 	}
 
 	reqBody := expandNLBSessionFromResourceData(d)
+	// An omitted targets_config delegates membership to an external controller.
+	// Preserve the targets from the same snapshot as If-Match, not stale state.
+	if !nlbTargetsConfigured(d) {
+		reqBody.TargetsConfig = current.TargetsConfig
+	}
 	headerArgs := map[string]interface{}{
 		"If-Match": utils.StringPtr(eTag),
 	}
@@ -476,7 +482,7 @@ func expandNLBHealthCheck(pr []interface{}) *import1.HealthCheck {
 
 func expandNLBTargets(pr []interface{}) *import1.Target {
 	if len(pr) == 0 || pr[0] == nil {
-		return nil
+		return &import1.Target{NicTargets: []import1.NicTarget{}}
 	}
 
 	val := pr[0].(map[string]interface{})
@@ -657,21 +663,36 @@ func flattenNLBTargetHealth(pr *import1.TargetHealth) string {
 }
 
 func fetchNLBETag(conn *networkingsdk.Client, extID string) (string, error) {
+	_, etag, err := fetchNLBSnapshot(context.Background(), conn, extID)
+	return etag, err
+}
+
+func nlbTargetsConfigured(d *schema.ResourceData) bool {
+	config := d.GetRawConfig()
+	if config.IsNull() || !config.IsKnown() {
+		return false
+	}
+	targets := config.GetAttr("targets_config")
+	return !targets.IsNull() && (!targets.IsKnown() || targets.LengthInt() > 0)
+}
+
+func fetchNLBSnapshot(ctx context.Context, conn *networkingsdk.Client, extID string) (*import1.LoadBalancerSession, string, error) {
 	if conn == nil || conn.APIClientInstance == nil {
-		return "", fmt.Errorf("networking api client is not initialized")
+		return nil, "", fmt.Errorf("networking api client is not initialized")
 	}
 
 	apiClient := conn.APIClientInstance
 	url := buildNLBURL(apiClient, extID)
 
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return "", err
+		return nil, "", err
 	}
 	req.SetBasicAuth(apiClient.Username, apiClient.Password)
 	req.Header.Set("Accept", "application/json")
 
 	httpClient := &http.Client{
+		Timeout: 30 * time.Second,
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{
 				InsecureSkipVerify: !apiClient.VerifySSL,
@@ -681,13 +702,12 @@ func fetchNLBETag(conn *networkingsdk.Client, extID string) (string, error) {
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return "", err
+		return nil, "", err
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("unexpected status %d while fetching eTag: %s", resp.StatusCode, string(body))
+		return nil, "", fmt.Errorf("unexpected status %d while fetching load balancer session", resp.StatusCode)
 	}
 
 	eTag := resp.Header.Get("Etag")
@@ -695,10 +715,19 @@ func fetchNLBETag(conn *networkingsdk.Client, extID string) (string, error) {
 		eTag = resp.Header.Get("ETag")
 	}
 	if eTag == "" {
-		return "", fmt.Errorf("missing eTag header in response")
+		return nil, "", fmt.Errorf("missing eTag header in response")
 	}
 
-	return eTag, nil
+	var response struct {
+		Data *import1.LoadBalancerSession `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return nil, "", fmt.Errorf("decoding load balancer session: %w", err)
+	}
+	if response.Data == nil {
+		return nil, "", fmt.Errorf("load balancer session response has no data")
+	}
+	return response.Data, eTag, nil
 }
 
 func buildNLBURL(apiClient *netclient.ApiClient, extID string) string {
