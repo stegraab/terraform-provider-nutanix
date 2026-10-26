@@ -1,6 +1,68 @@
 package networkingv2
 
-import "testing"
+import (
+	"context"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strconv"
+	"testing"
+
+	"github.com/hashicorp/go-cty/cty"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
+	netclient "github.com/nutanix/ntnx-api-golang-clients/networking-go-client/v4/client"
+	networkingsdk "github.com/terraform-providers/terraform-provider-nutanix/nutanix/sdks/v4/networking"
+)
+
+func TestNLBTargetOwnership(t *testing.T) {
+	resource := ResourceNutanixNLBV2()
+	for _, test := range []struct {
+		name    string
+		config  cty.Value
+		managed bool
+	}{
+		{"omitted", cty.ObjectVal(map[string]cty.Value{"targets_config": cty.NullVal(cty.List(cty.EmptyObject))}), false},
+		{"omitted block list", cty.ObjectVal(map[string]cty.Value{"targets_config": cty.ListValEmpty(cty.EmptyObject)}), false},
+		{"explicit empty block", cty.ObjectVal(map[string]cty.Value{"targets_config": cty.ListVal([]cty.Value{cty.EmptyObjectVal})}), true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			data := resource.Data(&terraform.InstanceState{ID: "nlb", RawConfig: test.config})
+			if got := nlbTargetsConfigured(data); got != test.managed {
+				t.Fatalf("managed = %v, want %v", got, test.managed)
+			}
+		})
+	}
+	if got := expandNLBTargets(nil); got == nil || len(got.NicTargets) != 0 {
+		t.Fatal("an omitted target block must create an empty target specification")
+	}
+}
+
+func TestNLBSnapshotUsesTargetsAndETagFromSameResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("ETag", "revision-2")
+		_, _ = w.Write([]byte(`{"data":{"extId":"nlb","targetsConfig":{"nicTargets":[{"virtualNicReference":"new-controller-target","port":6443}]}}}`))
+	}))
+	defer server.Close()
+	parsed, _ := url.Parse(server.URL)
+	host, portText, _ := net.SplitHostPort(parsed.Host)
+	port, _ := strconv.Atoi(portText)
+	client := netclient.NewApiClient()
+	client.Scheme, client.Host, client.Port = "http", host, port
+	connection := &networkingsdk.Client{APIClientInstance: client}
+	snapshot, etag, err := fetchNLBSnapshot(context.Background(), connection, "nlb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if etag != "revision-2" || *snapshot.TargetsConfig.NicTargets[0].VirtualNicReference != "new-controller-target" {
+		t.Fatal("expected latest controller target and matching ETag")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, _, err := fetchNLBSnapshot(ctx, connection, "nlb"); err == nil {
+		t.Fatal("cancelled reads must not produce an update snapshot")
+	}
+}
 
 func TestExpandNLBHealthCheckDefaultsWhenMissing(t *testing.T) {
 	got := expandNLBHealthCheck(nil)

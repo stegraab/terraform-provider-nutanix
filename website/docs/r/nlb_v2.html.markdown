@@ -55,7 +55,7 @@ The following arguments are supported:
 - `vpc_reference`: (Required) VPC UUID where the NLB is created.
 - `listener`: (Required) Listener configuration. Exactly one block is supported.
 - `health_check_config`: (Optional) Health check configuration. Exactly one block is supported. Defaults are used when omitted.
-- `targets_config`: (Required) Target backend configuration. Exactly one block is supported.
+- `targets_config`: (Optional, Computed) Target backend configuration. Exactly one block is supported. Omit the block to create an empty load balancer and delegate target membership to an external controller. Subsequent Terraform updates preserve the current remote targets using the same snapshot as the update's ETag. Configure an empty block to explicitly remove all targets. Empty target support depends on the Prism Central version and must be verified before deployment.
 
 ### listener
 
@@ -93,7 +93,7 @@ The following arguments are supported:
 
 ### targets_config
 
-- `nic_targets`: (Required) List of backend NIC targets. At least one block is required.
+- `nic_targets`: (Optional) List of backend NIC targets.
 
 ### targets_config.nic_targets
 
