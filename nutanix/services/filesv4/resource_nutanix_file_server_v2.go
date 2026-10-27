@@ -1362,7 +1362,7 @@ func updateDirectoryService(ctx context.Context, apiClient *filesClient.ApiClien
 	taskData, _ := respBody["data"].(map[string]interface{})
 	if taskID := responseTaskExtID(respBody); taskID != "" && hasConfiguredActiveDirectory(values) && strings.Contains(stringValue(taskData["$objectType"]), "Task") {
 		if err := waitForFilesDirectoryServiceTask(ctx, apiClient, fileServerExtID, taskID, timeout, values); err != nil {
-			return err
+			return fmt.Errorf("Files task %q: %w", taskID, err)
 		}
 	}
 	return nil
