@@ -96,6 +96,7 @@ The following arguments are supported:
 - `nfs_version`: (Optional) NFS version mode. Allowed values: `NFSV3`, `NFSV4`, `NFSV3V4`. Default: `NFSV3V4`.
 - `nfs_v4_domain`: (Optional) NFSv4 domain.
 - `ldap_domain`: (Optional) LDAP domain settings block.
+- `ad_domain`: (Optional) Active Directory join and authentication settings. See below.
 
 ### `ldap_domain`
 
@@ -114,3 +115,73 @@ resource "nutanix_file_server_v2" "imported" {}
 ```bash
 terraform import nutanix_file_server_v2.imported <EXT_ID>
 ```
+
+## Active Directory with existing NFS exports
+
+Add `ad_domain` to `directory_service` to join an existing file server without
+replacing it. Keep `local_domain = "NFS"` to retain unmanaged NFS authentication
+and use AD only for SMB:
+
+```hcl
+variable "files_ad_join_password" {
+  type      = string
+  sensitive = true
+}
+```
+
+Inside the existing `nutanix_file_server_v2` resource:
+
+```hcl
+directory_service {
+  local_domain = "NFS"
+  nfs_version  = "NFSV3V4"
+
+  ad_domain {
+    domain_name                 = "ad.example.com"
+    protocol_type               = "SMB"
+    username                    = "join@ad.example.com"
+    password                    = var.files_ad_join_password
+    preferred_domain_controller = "dc1.ad.example.com"
+    organization_unit           = "OU=Files,DC=ad,DC=example,DC=com"
+  }
+}
+```
+
+The OU above is an example; provision and delegate the intended OU before joining.
+The password is sensitive but remains in Terraform state. Protect the state and
+supply credentials through a secret source rather than committing them. The API
+does not return the password; refresh retains the configured credentials and
+request options instead of replacing them with redacted API values.
+
+AD integration does not create SMB shares, change existing export permissions,
+or configure multiprotocol user mappings. Each protocol must use only one of
+AD, LDAP, or local authentication. Existing DNS, routing, firewall, time
+synchronization, AD join permissions, and Metro recovery requirements must be
+satisfied separately. Do not change `dns_domain_name` just to specify the AD realm:
+that attribute forces file-server replacement.
+
+### `ad_domain`
+
+- `domain_name`: (Required) AD DNS domain to join, independent of `dns_domain_name`.
+- `protocol_type`: (Optional) `SMB` (default), `NFS`, `SMB_NFS`, or `NONE` for an explicit leave.
+- `username`: (Required) Join/leave account name. Use a UPN such as `join@example.com`.
+- `password`: (Required, Sensitive) Join/leave account password.
+- `organization_unit`: (Optional) Organizational unit for the Files machine account, in the format accepted by Files, for example `OU=Files,DC=example,DC=com`.
+- `preferred_domain_controller`: (Optional) Preferred writable DC FQDN; IP addresses and short names are rejected.
+- `is_rfc2307_enabled`: (Optional) Enable RFC 2307 identity attributes. Default: `false`.
+- `should_overwrite_user_account`: (Optional) Allow overwriting an existing machine account. Default: `false`.
+- `should_add_user_as_fs_admin`: (Optional) Add the joining user as a Files administrator. Default: `false`.
+- `should_use_same_credentials_for_dns`: (Optional) Use the join credentials for Microsoft DNS updates. Default: `false`. Leave disabled for DNS managed separately.
+- `should_validate_ad_credential`: (Optional) Ask Files to validate the AD credentials. Default: `false`.
+- `should_force_leave_domain`: (Optional) Bypass AD interactions while leaving an unreachable domain. Default: `false`. If enabled, remove stale AD machine accounts separately.
+
+Joining and changing directory settings use the existing stable DirectoryService
+PUT endpoint and its ETag. For a new server with no directory service yet, the
+provider first bootstraps local/LDAP name services through the existing action,
+then adds AD through the stable endpoint.
+
+To leave a domain, retain the `ad_domain` block and credentials, set
+`protocol_type = "NONE"`, and apply. After the leave completes, remove the block
+in a second apply. Direct removal of an active AD configuration is rejected.
+Changing domains also requires leaving the old domain first. Leaving disrupts
+AD-dependent shares; schedule it accordingly.
