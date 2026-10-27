@@ -25,7 +25,7 @@ func adTestValues(t *testing.T, protocol string) []interface{} {
 			"ad_domain": []interface{}{map[string]interface{}{
 				"domain_name": "ad.example.com", "protocol_type": protocol,
 				"username": "join@ad.example.com", "password": "test-only-secret",
-				"organization_unit":           "OU=Files,DC=ad,DC=example,DC=com",
+				"organization_unit":           "Files",
 				"preferred_domain_controller": "dc1.ad.example.com",
 			}},
 		}},
@@ -42,7 +42,7 @@ func TestActiveDirectoryPayloadKeepsUnmanagedNFS(t *testing.T) {
 		t.Fatalf("NFS settings changed: %#v", payload)
 	}
 	ad := payload["adDomain"].(map[string]interface{})
-	if ad["protocolType"] != "SMB" || ad["domainName"] != "ad.example.com" || ad["organizationUnit"] != "OU=Files,DC=ad,DC=example,DC=com" {
+	if ad["protocolType"] != "SMB" || ad["domainName"] != "ad.example.com" || ad["organizationUnit"] != "Files" {
 		t.Fatalf("unexpected join settings: %#v", ad)
 	}
 	credential := ad["credential"].(map[string]interface{})
@@ -311,14 +311,14 @@ func TestActiveDirectoryUpdateWaitsForTaskAndRedactsFailure(t *testing.T) {
 			polled := false
 			client := testDirectoryClient(t, func(w http.ResponseWriter, r *http.Request) {
 				switch {
-				case strings.HasPrefix(r.URL.Path, "/api/nutanix/v2.0/tasks/"):
+				case strings.HasPrefix(r.URL.Path, "/api/files/v4.0/config/file-servers/fs/tasks/"):
 					polled = true
-					fmt.Fprintf(w, `{"progress_status":%q,"error":"test-only-secret"}`, status)
+					fmt.Fprintf(w, `{"data":{"status":%q,"legacyErrorMessage":"test-only-secret"}}`, strings.ToUpper(status))
 				case r.Method == "PUT":
 					if r.Header.Get("NTNX-Request-Id") == "" {
 						t.Error("missing request id")
 					}
-					fmt.Fprint(w, `{"data":{"$objectType":"prism.v4.config.TaskReference","extId":"join-task"}}`)
+					fmt.Fprint(w, `{"data":{"$objectType":"prism.v4.config.TaskReference","extId":"ZXJnb24=:join-task"}}`)
 				case strings.HasSuffix(r.URL.Path, "/ds"):
 					fmt.Fprint(w, `{"data":{"extId":"ds","localDomain":"NFS"}}`)
 				default:
@@ -349,5 +349,31 @@ func TestExistingNFSDirectoryPayloadUnchanged(t *testing.T) {
 	want := map[string]interface{}{"localDomain": "NFS", "nfsVersion": "NFSV3V4"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("existing NFS payload changed: got %#v", got)
+	}
+}
+
+func TestFilesTaskPathScopesErgonToFileServer(t *testing.T) {
+	path, err := filesDirectoryServiceTaskPath("76a1c940-296b-4fd5-611c-9eb264f993f7", "ZXJnb24=:task-uuid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Ergon:<file-server UUID> is encoded into the service prefix.
+	want := "/api/files/v4.0/config/file-servers/76a1c940-296b-4fd5-611c-9eb264f993f7/tasks/ZXJnb246NzZhMWM5NDAtMjk2Yi00ZmQ1LTYxMWMtOWViMjY0Zjk5M2Y3:task-uuid"
+	if path != want {
+		t.Fatalf("task path = %q, want %q", path, want)
+	}
+	if _, err := filesDirectoryServiceTaskPath("fs", "unscoped-task"); err == nil {
+		t.Fatal("invalid task ID accepted")
+	}
+}
+
+func TestFilesOrganizationUnitUsesRelativePath(t *testing.T) {
+	for _, value := range []string{"", "Files", "IMPORTED-COMPUTERS", "Tier 1/Servers"} {
+		if _, errs := validateFilesOrganizationUnit(value, "ou"); len(errs) > 0 {
+			t.Fatalf("valid OU %q rejected: %v", value, errs)
+		}
+	}
+	if _, errs := validateFilesOrganizationUnit("OU=Files,DC=example,DC=com", "ou"); len(errs) == 0 {
+		t.Fatal("LDAP DN accepted as Files OU path")
 	}
 }
