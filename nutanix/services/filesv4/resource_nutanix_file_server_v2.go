@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hashicorp/go-uuid"
 	version "github.com/hashicorp/go-version"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
@@ -39,6 +40,7 @@ const prismV2TaskPathTemplate = "/api/nutanix/v2.0/tasks/%s"
 func ResourceNutanixFileServerV2() *schema.Resource {
 	return &schema.Resource{
 		CreateContext: resourceNutanixFileServerV2Create,
+		CustomizeDiff: validateFileServerDirectoryServiceDiff,
 		ReadContext:   resourceNutanixFileServerV2Read,
 		UpdateContext: resourceNutanixFileServerV2Update,
 		DeleteContext: resourceNutanixFileServerV2Delete,
@@ -306,6 +308,7 @@ func ResourceNutanixFileServerV2() *schema.Resource {
 							Type:     schema.TypeString,
 							Optional: true,
 						},
+						"ad_domain": activeDirectorySchema(),
 						"ldap_domain": {
 							Type:     schema.TypeList,
 							Optional: true,
@@ -388,7 +391,7 @@ func resourceNutanixFileServerV2Create(ctx context.Context, d *schema.ResourceDa
 	d.SetId(extID)
 
 	if v, ok := d.GetOk("directory_service"); ok {
-		if err := updateDirectoryService(apiClient, extID, v.([]interface{})); err != nil {
+		if err := updateDirectoryService(ctx, apiClient, extID, v.([]interface{}), d.Timeout(schema.TimeoutCreate)); err != nil {
 			return diag.Errorf("error while configuring file server directory service for %q: %v", extID, err)
 		}
 	}
@@ -437,7 +440,7 @@ func resourceNutanixFileServerV2Update(ctx context.Context, d *schema.ResourceDa
 	}
 
 	if d.HasChange("directory_service") {
-		if err := updateDirectoryService(apiClient, d.Id(), d.Get("directory_service").([]interface{})); err != nil {
+		if err := updateDirectoryService(ctx, apiClient, d.Id(), d.Get("directory_service").([]interface{}), d.Timeout(schema.TimeoutUpdate)); err != nil {
 			return diag.Errorf("error while updating file server directory service for %q: %v", d.Id(), err)
 		}
 	}
@@ -1253,6 +1256,7 @@ func refreshDirectoryServiceState(d *schema.ResourceData, apiClient *filesClient
 	if len(flattened) == 0 {
 		return d.Set("directory_service", []interface{}{})
 	}
+	preserveActiveDirectoryInputs(flattened, d.Get("directory_service").([]interface{}))
 	return d.Set("directory_service", flattened)
 }
 
@@ -1301,18 +1305,22 @@ func getDirectoryService(apiClient *filesClient.ApiClient, fileServerExtID strin
 	return dataObj, headers.Get("Etag"), false, nil
 }
 
-func updateDirectoryService(apiClient *filesClient.ApiClient, fileServerExtID string, values []interface{}) error {
+func updateDirectoryService(ctx context.Context, apiClient *filesClient.ApiClient, fileServerExtID string, values []interface{}, timeout time.Duration) error {
 	current, etag, notFound, err := getDirectoryService(apiClient, fileServerExtID)
 	if err != nil {
 		return err
 	}
 	if notFound || current == nil {
-		return configureDirectoryService(apiClient, fileServerExtID, values)
+		return configureDirectoryService(ctx, apiClient, fileServerExtID, values, timeout)
 	}
 
 	dsExtID := stringValue(current["extId"])
 	if dsExtID == "" {
 		return fmt.Errorf("directory service extId missing in current configuration")
+	}
+
+	if hasActiveDirectory(current) && !hasConfiguredActiveDirectory(values) {
+		return fmt.Errorf("leaving Active Directory requires an ad_domain block with protocol_type = NONE and domain credentials; apply that change before removing the block")
 	}
 
 	if len(values) == 0 || values[0] == nil {
@@ -1324,8 +1332,19 @@ func updateDirectoryService(apiClient *filesClient.ApiClient, fileServerExtID st
 		return err
 	}
 
+	if err := validateActiveDirectoryTransition(current, payload); err != nil {
+		return err
+	}
+
 	path := fmt.Sprintf(filesDirectoryServicesPathTemplate, fileServerExtID) + "/" + dsExtID
 	headers := map[string]string{}
+	if hasConfiguredActiveDirectory(values) {
+		requestID, err := uuid.GenerateUUID()
+		if err != nil {
+			return err
+		}
+		headers["NTNX-Request-Id"] = requestID
+	}
 	if etag != "" {
 		headers["If-Match"] = etag
 	}
@@ -1335,14 +1354,59 @@ func updateDirectoryService(apiClient *filesClient.ApiClient, fileServerExtID st
 		return err
 	}
 	if statusCode >= http.StatusBadRequest || filesHasError(respBody) {
+		if hasConfiguredActiveDirectory(values) {
+			return fmt.Errorf("Active Directory update failed (HTTP %d); inspect the Files operation for details", statusCode)
+		}
 		return fmt.Errorf("%s", filesErrorMessage(respBody, statusCode))
+	}
+	taskData, _ := respBody["data"].(map[string]interface{})
+	if taskID := responseTaskExtID(respBody); taskID != "" && hasConfiguredActiveDirectory(values) && strings.Contains(stringValue(taskData["$objectType"]), "Task") {
+		if err := waitForPrismV2Task(ctx, apiClient, taskID, timeout); err != nil {
+			return fmt.Errorf("Active Directory operation did not complete; inspect the Files task %q", taskID)
+		}
 	}
 	return nil
 }
 
-func configureDirectoryService(apiClient *filesClient.ApiClient, fileServerExtID string, values []interface{}) error {
+func configureDirectoryService(ctx context.Context, apiClient *filesClient.ApiClient, fileServerExtID string, values []interface{}, timeout time.Duration) error {
 	if len(values) == 0 || values[0] == nil {
 		return nil
+	}
+
+	// Bootstrap through the existing name-services action, then use the stable
+	// DirectoryService API for AD's credential and join options.
+	if hasConfiguredActiveDirectory(values) {
+		root := values[0].(map[string]interface{})
+		bootstrap := map[string]interface{}{}
+		for k, v := range root {
+			if k != "ad_domain" {
+				bootstrap[k] = v
+			}
+		}
+		if bootstrap["local_domain"] == "NONE" {
+			bootstrap["local_domain"] = "NFS"
+		}
+		if err := configureDirectoryService(ctx, apiClient, fileServerExtID, []interface{}{bootstrap}, timeout); err != nil {
+			return err
+		}
+		wait := &resource.StateChangeConf{
+			Pending: []string{"PENDING"}, Target: []string{"READY"},
+			Timeout: 2 * time.Minute, MinTimeout: time.Second,
+			Refresh: func() (interface{}, string, error) {
+				ds, _, missing, err := getDirectoryService(apiClient, fileServerExtID)
+				if err != nil {
+					return nil, "", err
+				}
+				if missing {
+					return nil, "PENDING", nil
+				}
+				return ds, "READY", nil
+			},
+		}
+		if _, err := wait.WaitForStateContext(ctx); err != nil {
+			return err
+		}
+		return updateDirectoryService(ctx, apiClient, fileServerExtID, values, timeout)
 	}
 
 	payload, err := buildDirectoryServiceActionPayload(values)
@@ -1463,6 +1527,9 @@ func buildDirectoryServicePayload(values []interface{}) (map[string]interface{},
 		payload["ldapDomain"] = ldapPayload
 	}
 
+	if err := addActiveDirectoryPayload(root, payload); err != nil {
+		return nil, err
+	}
 	return payload, nil
 }
 
@@ -1503,6 +1570,8 @@ func flattenDirectoryService(item map[string]interface{}) []map[string]interface
 	if nfsV4Domain := stringValue(item["nfsV4Domain"]); nfsV4Domain != "" {
 		result["nfs_v4_domain"] = nfsV4Domain
 	}
+
+	flattenActiveDirectory(item, result)
 
 	if ldapRaw, ok := item["ldapDomain"].(map[string]interface{}); ok {
 		ldap := map[string]interface{}{}
