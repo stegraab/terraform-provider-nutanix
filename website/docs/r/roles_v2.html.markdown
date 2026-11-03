@@ -41,7 +41,7 @@ The following arguments are supported:
 - `display_name`: -(Required) The display name for the Role.
 - `description`: - Description of the Role.
 - `client_name`: - Client that created the entity.
-- `operations`: -(Required) List of operations for the role.
+- `operations`: -(Required) Set of operations for the role. Ordering is not significant.
 - `project_ext_id`: -(Optional) Project reference for the role.
 
 ## Attributes Reference
@@ -54,7 +54,7 @@ The following attributes are exported:
 - `display_name`: - The display name for the Role.
 - `description`: - Description of the Role.
 - `client_name`: - Client that created the entity.
-- `operations`: - List of operations for the role.
+- `operations`: - Set of operations for the role. Use `sort(tolist(nutanix_roles_v2.example-role.operations))` if an ordered list is needed.
 * `project_ext_id`: - Project reference for the role.
 * `share_with_all_projects`: - Flag indicating whether the role is shared with all projects or not.
 - `accessible_clients`: - List of Accessible Clients for the Role.
