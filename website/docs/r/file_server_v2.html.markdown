@@ -142,7 +142,7 @@ directory_service {
     username                    = "join@ad.example.com"
     password                    = var.files_ad_join_password
     preferred_domain_controller = "dc1.ad.example.com"
-    organization_unit           = "OU=Files,DC=ad,DC=example,DC=com"
+    organization_unit           = "Files"
   }
 }
 ```
@@ -166,7 +166,7 @@ that attribute forces file-server replacement.
 - `protocol_type`: (Optional) `SMB` (default), `NFS`, `SMB_NFS`, or `NONE` for an explicit leave.
 - `username`: (Required) Join/leave account name. Use a UPN such as `join@example.com`.
 - `password`: (Required, Sensitive) Join/leave account password.
-- `organization_unit`: (Optional) Organizational unit for the Files machine account, in the format accepted by Files, for example `OU=Files,DC=example,DC=com`.
+- `organization_unit`: (Optional) Relative OU path for the Files machine account, for example `Files` or `Parent/Files`. Do not supply an LDAP distinguished name.
 - `preferred_domain_controller`: (Optional) Preferred writable DC FQDN; IP addresses and short names are rejected.
 - `is_rfc2307_enabled`: (Optional) Enable RFC 2307 identity attributes. Default: `false`.
 - `should_overwrite_user_account`: (Optional) Allow overwriting an existing machine account. Default: `false`.

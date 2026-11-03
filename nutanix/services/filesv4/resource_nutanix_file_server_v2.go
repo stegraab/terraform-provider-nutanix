@@ -1361,8 +1361,8 @@ func updateDirectoryService(ctx context.Context, apiClient *filesClient.ApiClien
 	}
 	taskData, _ := respBody["data"].(map[string]interface{})
 	if taskID := responseTaskExtID(respBody); taskID != "" && hasConfiguredActiveDirectory(values) && strings.Contains(stringValue(taskData["$objectType"]), "Task") {
-		if err := waitForPrismV2Task(ctx, apiClient, taskID, timeout); err != nil {
-			return fmt.Errorf("Active Directory operation did not complete; inspect the Files task %q", taskID)
+		if err := waitForFilesDirectoryServiceTask(ctx, apiClient, fileServerExtID, taskID, timeout, values); err != nil {
+			return fmt.Errorf("Files task %q: %w", taskID, err)
 		}
 	}
 	return nil

@@ -2,9 +2,15 @@ package filesv4
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
+	filesClient "github.com/terraform-providers/terraform-provider-nutanix/nutanix/sdks/v4/files"
+	"net/http"
 	"net/netip"
+	"net/url"
 	"strings"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
@@ -28,7 +34,7 @@ func activeDirectorySchema() *schema.Schema {
 		"protocol_type":               {Type: schema.TypeString, Optional: true, Default: "SMB", ValidateFunc: validation.StringInSlice([]string{"NONE", "NFS", "SMB", "SMB_NFS"}, false)},
 		"username":                    {Type: schema.TypeString, Required: true, ValidateFunc: validation.StringIsNotWhiteSpace},
 		"password":                    {Type: schema.TypeString, Required: true, Sensitive: true, ValidateFunc: validation.StringIsNotEmpty},
-		"organization_unit":           {Type: schema.TypeString, Optional: true},
+		"organization_unit":           {Type: schema.TypeString, Optional: true, ValidateFunc: validateFilesOrganizationUnit},
 		"preferred_domain_controller": {Type: schema.TypeString, Optional: true, ValidateFunc: validatePreferredDomainController},
 		"is_rfc2307_enabled":          {Type: schema.TypeBool, Optional: true, Default: false},
 	}
@@ -183,4 +189,76 @@ func validateFileServerDirectoryServiceDiff(ctx context.Context, diff *schema.Re
 	}
 	_, err := buildDirectoryServicePayload(diff.Get("directory_service").([]interface{}))
 	return err
+}
+
+// Files proxies FSVM tasks through a scoped endpoint. The encoded task prefix
+// includes both the task service (for example Ergon) and the file-server UUID;
+// querying Prism Central's task database cannot find these FSVM-local tasks.
+func filesDirectoryServiceTaskPath(fileServerID, taskID string) (string, error) {
+	parts := strings.SplitN(taskID, ":", 2)
+	if len(parts) != 2 || parts[1] == "" {
+		return "", fmt.Errorf("invalid Files task identifier")
+	}
+	service, err := base64.StdEncoding.DecodeString(parts[0])
+	if err != nil {
+		return "", fmt.Errorf("invalid Files task service encoding")
+	}
+	scopedService := string(service)
+	if !strings.Contains(scopedService, ":") {
+		scopedService += ":" + fileServerID
+	}
+	scopedID := base64.StdEncoding.EncodeToString([]byte(scopedService)) + ":" + parts[1]
+	return fmt.Sprintf("/api/files/v4.0/config/file-servers/%s/tasks/%s", url.PathEscape(fileServerID), url.PathEscape(scopedID)), nil
+}
+
+func waitForFilesDirectoryServiceTask(ctx context.Context, client *filesClient.ApiClient, fileServerID, taskID string, timeout time.Duration, values []interface{}) error {
+	path, err := filesDirectoryServiceTaskPath(fileServerID, taskID)
+	if err != nil {
+		return err
+	}
+	wait := &resource.StateChangeConf{
+		Pending: []string{"QUEUED", "RUNNING", "PENDING"}, Target: []string{"SUCCEEDED"},
+		Timeout: timeout, MinTimeout: 2 * time.Second,
+		Refresh: func() (interface{}, string, error) {
+			response, statusCode, err := filesRequest(client, http.MethodGet, path, nil)
+			if err != nil {
+				return nil, "", err
+			}
+			if statusCode >= 400 || filesHasError(response) {
+				return nil, "", directoryServiceError(filesErrorMessage(response, statusCode), values)
+			}
+			task, _ := response["data"].(map[string]interface{})
+			status := stringValue(task["status"])
+			switch status {
+			case "FAILED", "CANCELED", "CANCELLED":
+				message := stringValue(task["legacyErrorMessage"])
+				if message == "" {
+					message = filesErrorMessage(task, statusCode)
+				}
+				return task, status, directoryServiceError(message, values)
+			case "":
+				return nil, "", fmt.Errorf("Files directory-service task response did not contain a status")
+			}
+			return task, status, nil
+		},
+	}
+	_, err = wait.WaitForStateContext(ctx)
+	return err
+}
+
+func directoryServiceError(message string, values []interface{}) error {
+	if ad := configuredActiveDirectory(values); ad != nil {
+		if password := stringValue(ad["password"]); password != "" {
+			message = strings.ReplaceAll(message, password, "[REDACTED]")
+		}
+	}
+	return fmt.Errorf("Files directory-service operation failed: %s", message)
+}
+
+func validateFilesOrganizationUnit(value interface{}, key string) ([]string, []error) {
+	text := strings.ToUpper(value.(string))
+	if strings.Contains(text, "OU=") || strings.Contains(text, "DC=") || strings.Contains(text, "CN=") {
+		return nil, []error{fmt.Errorf("%s must be a relative OU path such as Files or Parent/Files, not an LDAP distinguished name", key)}
+	}
+	return nil, nil
 }
