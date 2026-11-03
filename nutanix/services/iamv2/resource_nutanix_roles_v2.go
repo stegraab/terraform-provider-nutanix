@@ -54,8 +54,8 @@ func ResourceNutanixRolesV2() *schema.Resource {
 				Default:  false,
 			},
 			"operations": {
-				Description: "List of Operations for the Role.",
-				Type:        schema.TypeList,
+				Description: "Set of operations for the role.",
+				Type:        schema.TypeSet,
 				Required:    true,
 				Elem: &schema.Schema{
 					Description: "List of String",
@@ -166,7 +166,7 @@ func ResourceNutanixRolesV4Create(ctx context.Context, d *schema.ResourceData, m
 		body.ProjectExtId = utils.StringPtr(projectExtID.(string))
 	}
 	if operations, ok := d.GetOk("operations"); ok {
-		operationsList := operations.([]interface{})
+		operationsList := operations.(*schema.Set).List()
 		operationsListStr := make([]string, len(operationsList))
 		for i, v := range operationsList {
 			operationsListStr[i] = v.(string)
@@ -202,44 +202,8 @@ func ResourceNutanixRolesV4Read(ctx context.Context, d *schema.ResourceData, met
 
 	getResp := resp.Data.GetValue().(iamConfig.Role)
 
-	// after creating role, operations saved in remote in different order than local
-	if len(getResp.Operations) > 0 {
-		// read the remote operations and local operations list
-		remoteOperations := getResp.Operations
-		localOperations := d.Get("operations").([]interface{})
-
-		// final result for checking if operations are different
-		diff := false
-
-		// convert local operations to string slice
-		localOperationsStr := make([]string, len(localOperations))
-		for i, v := range localOperations {
-			localOperationsStr[i] = (v.(string))
-		}
-
-		log.Printf("[DEBUG] localOperationsStr: %v", localOperationsStr)
-
-		// check if remote operations are different from local operations
-		for _, operation := range remoteOperations {
-			offset := indexOf(localOperationsStr, operation)
-
-			if offset == -1 {
-				log.Printf("[DEBUG] Operation %v not found in local operations", operation)
-				diff = true
-				break
-			}
-		}
-
-		// if operations are different, update local operations
-		if diff {
-			log.Printf("[DEBUG] Operations are different. Updating local operations")
-			if err := d.Set("operations", getResp.Operations); err != nil {
-				return diag.FromErr(err)
-			}
-		} else {
-			// if operations are same, do not update local operations
-			log.Printf("[DEBUG] Operations are same. Not updating local operations")
-		}
+	if err := d.Set("operations", getResp.Operations); err != nil {
+		return diag.FromErr(err)
 	}
 
 	if err := d.Set("links", flattenLinks(getResp.Links)); err != nil {
@@ -334,7 +298,7 @@ func ResourceNutanixRolesV4Update(ctx context.Context, d *schema.ResourceData, m
 		updatedSpec.IsGlobal = nil
 	}
 	if d.HasChange("operations") {
-		operations := d.Get("operations").([]interface{})
+		operations := d.Get("operations").(*schema.Set).List()
 		operationsListStr := make([]string, len(operations))
 		for i, v := range operations {
 			operationsListStr[i] = v.(string)
@@ -394,13 +358,4 @@ func ResourceNutanixRolesV4Delete(ctx context.Context, d *schema.ResourceData, m
 		log.Println("[DEBUG] Role deleted successfully.")
 	}
 	return nil
-}
-
-func indexOf(slice []string, target string) int {
-	for i, v := range slice {
-		if v == target {
-			return i
-		}
-	}
-	return -1
 }
