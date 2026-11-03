@@ -175,7 +175,10 @@ func preserveActiveDirectoryInputs(flattened []map[string]interface{}, previous 
 		return
 	}
 	for field := range activeDirectoryInputFields {
-		if _, returned := blocks[0][field]; !returned {
+		value, returned := blocks[0][field]
+		// OU is a join input, not an inventory of the computer's live AD path.
+		// Files can return an empty OU after accepting a directory-service update.
+		if !returned || (field == "organization_unit" && stringValue(value) == "") {
 			if value, exists := prior[field]; exists {
 				blocks[0][field] = value
 			}

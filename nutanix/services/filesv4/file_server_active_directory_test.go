@@ -377,3 +377,22 @@ func TestFilesOrganizationUnitUsesRelativePath(t *testing.T) {
 		t.Fatal("LDAP DN accepted as Files OU path")
 	}
 }
+
+func TestActiveDirectoryRefreshPreservesJoinOUWhenFilesReturnsEmpty(t *testing.T) {
+	for _, remoteOU := range []string{"", "Moved/Files"} {
+		t.Run(remoteOU, func(t *testing.T) {
+			flat := flattenDirectoryService(map[string]interface{}{"localDomain": "NFS", "adDomain": map[string]interface{}{
+				"domainName": "ad.example.com", "protocolType": "SMB", "organizationUnit": remoteOU,
+			}})
+			preserveActiveDirectoryInputs(flat, adTestValues(t, "SMB"))
+			want := remoteOU
+			if want == "" {
+				want = "Files"
+			}
+			got := flat[0]["ad_domain"].([]map[string]interface{})[0]["organization_unit"]
+			if got != want {
+				t.Fatalf("OU refresh: got %v, want %s", got, want)
+			}
+		})
+	}
+}
