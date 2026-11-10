@@ -152,6 +152,14 @@ func TestProjectSubnetAssociationErrors(t *testing.T) {
 			t.Fatalf("task error lost: %v", err)
 		}
 	})
+	t.Run("missing specification version", func(t *testing.T) {
+		f := &projectSubnetFake{project: projectSubnetFixture()}
+		delete(f.project, "metadata")
+		if err := changeProjectSubnet(context.Background(), f, "p", "new", true, time.Second, nil); err == nil || f.writes != 0 {
+			t.Fatal("unversioned update accepted")
+		}
+	})
+
 	t.Run("malformed response", func(t *testing.T) {
 		if _, _, err := projectSubnetReferences(map[string]interface{}{}, "subnet"); err == nil {
 			t.Fatal("malformed response treated as absent association")

@@ -185,6 +185,10 @@ func changeProjectSubnet(ctx context.Context, api projectSubnetAPI, projectID, s
 		if attach {
 			updated = append(updated, map[string]interface{}{"kind": "subnet", "uuid": subnetID})
 		}
+		metadata, ok := project["metadata"].(map[string]interface{})
+		if !ok || metadata["spec_version"] == nil {
+			return resource.NonRetryableError(fmt.Errorf("project response is missing spec_version; refusing an unversioned update"))
+		}
 		resources["subnet_reference_list"] = updated
 		delete(project, "status")
 		response, err := api.Update(ctx, projectID, project)
