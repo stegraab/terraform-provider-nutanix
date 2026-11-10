@@ -435,6 +435,7 @@ func Provider() *schema.Provider {
 			"nutanix_network_security_rule":                   networking.ResourceNutanixNetworkSecurityRule(),
 			"nutanix_access_control_policy":                   prism.ResourceNutanixAccessControlPolicy(),
 			"nutanix_project":                                 prism.ResourceNutanixProject(),
+			"nutanix_project_subnet":                          prism.ResourceNutanixProjectSubnet(),
 			"nutanix_role":                                    iam.ResourceNutanixRole(),
 			"nutanix_prism_element_user":                      iam.ResourceNutanixPrismElementUser(),
 			"nutanix_user":                                    iam.ResourceNutanixUser(),
