@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/retry"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
 	conns "github.com/terraform-providers/terraform-provider-nutanix/nutanix"
@@ -38,7 +40,7 @@ func ResourceNutanixFileServerUserV2() *schema.Resource {
 				Type:         schema.TypeString,
 				Required:     true,
 				ForceNew:     true,
-				ValidateFunc: validation.StringIsNotEmpty,
+				ValidateFunc: validation.StringLenBetween(1, 40),
 			},
 			"password": {
 				Type:      schema.TypeString,
@@ -75,12 +77,11 @@ func resourceNutanixFileServerUserV2Create(ctx context.Context, d *schema.Resour
 		return resourceNutanixFileServerUserV2Update(ctx, d, meta)
 	}
 
-	respBody, statusCode, err := filesRequest(apiClient, http.MethodPost, fileServerUsersPath(d), buildFileServerUserPayload(d))
+	respBody, err := retryFileServerUserMutation(ctx, func() (map[string]interface{}, int, error) {
+		return filesRequest(apiClient, http.MethodPost, fileServerUsersPath(d), buildFileServerUserPayload(d))
+	})
 	if err != nil {
 		return diag.FromErr(err)
-	}
-	if statusCode >= http.StatusBadRequest || filesHasError(respBody) {
-		return diag.Errorf("%s", filesErrorMessage(respBody, statusCode))
 	}
 
 	data, ok := respBody["data"].(map[string]interface{})
@@ -117,7 +118,20 @@ func resourceNutanixFileServerUserV2Read(_ context.Context, d *schema.ResourceDa
 
 func resourceNutanixFileServerUserV2Update(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
 	apiClient := meta.(*conns.Client).FilesAPI.APIClientInstance
-	_, etag, notFound, err := getFileServerUserByID(apiClient, d.Get("file_server_ext_id").(string), d.Id())
+	var notFound bool
+	_, err := retryFileServerUserMutation(ctx, func() (map[string]interface{}, int, error) {
+		_, etag, missing, err := getFileServerUserByID(apiClient, d.Get("file_server_ext_id").(string), d.Id())
+		if err != nil || missing {
+			notFound = missing
+			return nil, http.StatusOK, err
+		}
+		headers := map[string]string{}
+		if etag != "" {
+			headers["If-Match"] = etag
+		}
+		body, status, _, err := filesRequestWithHeaders(apiClient, http.MethodPut, fileServerUsersPath(d)+"/"+d.Id(), buildFileServerUserPayload(d), headers)
+		return body, status, err
+	})
 	if err != nil {
 		return diag.FromErr(err)
 	}
@@ -125,45 +139,48 @@ func resourceNutanixFileServerUserV2Update(ctx context.Context, d *schema.Resour
 		d.SetId("")
 		return nil
 	}
-
-	headers := map[string]string{}
-	if etag != "" {
-		headers["If-Match"] = etag
-	}
-
-	respBody, statusCode, _, err := filesRequestWithHeaders(apiClient, http.MethodPut, fileServerUsersPath(d)+"/"+d.Id(), buildFileServerUserPayload(d), headers)
-	if err != nil {
-		return diag.FromErr(err)
-	}
-	if statusCode >= http.StatusBadRequest || filesHasError(respBody) {
-		return diag.Errorf("%s", filesErrorMessage(respBody, statusCode))
-	}
 	return resourceNutanixFileServerUserV2Read(ctx, d, meta)
 }
 
-func resourceNutanixFileServerUserV2Delete(_ context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+func resourceNutanixFileServerUserV2Delete(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
 	apiClient := meta.(*conns.Client).FilesAPI.APIClientInstance
-	_, etag, notFound, err := getFileServerUserByID(apiClient, d.Get("file_server_ext_id").(string), d.Id())
+	_, err := retryFileServerUserMutation(ctx, func() (map[string]interface{}, int, error) {
+		_, etag, notFound, err := getFileServerUserByID(apiClient, d.Get("file_server_ext_id").(string), d.Id())
+		if err != nil || notFound {
+			return nil, http.StatusOK, err
+		}
+		headers := map[string]string{}
+		if etag != "" {
+			headers["If-Match"] = etag
+		}
+		body, status, _, err := filesRequestWithHeaders(apiClient, http.MethodDelete, fileServerUsersPath(d)+"/"+d.Id(), nil, headers)
+		return body, status, err
+	})
 	if err != nil {
 		return diag.FromErr(err)
-	}
-	if notFound {
-		return nil
-	}
-
-	headers := map[string]string{}
-	if etag != "" {
-		headers["If-Match"] = etag
-	}
-
-	respBody, statusCode, _, err := filesRequestWithHeaders(apiClient, http.MethodDelete, fileServerUsersPath(d)+"/"+d.Id(), nil, headers)
-	if err != nil {
-		return diag.FromErr(err)
-	}
-	if statusCode >= http.StatusBadRequest || filesHasError(respBody) {
-		return diag.Errorf("%s", filesErrorMessage(respBody, statusCode))
 	}
 	return nil
+}
+
+func retryFileServerUserMutation(ctx context.Context, operation func() (map[string]interface{}, int, error)) (map[string]interface{}, error) {
+	var body map[string]interface{}
+	err := retry.RetryContext(ctx, 30*time.Second, func() *retry.RetryError {
+		var status int
+		var err error
+		body, status, err = operation()
+		if err != nil {
+			return retry.NonRetryableError(err)
+		}
+		if status < http.StatusBadRequest && !filesHasError(body) {
+			return nil
+		}
+		err = fmt.Errorf("%s", filesErrorMessage(body, status))
+		if strings.Contains(strings.ToLower(err.Error()), "zk: version conflict") {
+			return retry.RetryableError(err)
+		}
+		return retry.NonRetryableError(err)
+	})
+	return body, err
 }
 
 func buildFileServerUserPayload(d *schema.ResourceData) map[string]interface{} {
