@@ -1,11 +1,13 @@
 module github.com/terraform-providers/terraform-provider-nutanix
 
-go 1.26.10
+go 1.27.4
 
 require (
 	github.com/PaesslerAG/jsonpath v0.1.1
+	github.com/gofrs/flock v0.13.0
 	github.com/hashicorp/go-cty v1.5.0
 	github.com/hashicorp/go-uuid v1.0.3
+	github.com/hashicorp/go-version v1.9.0
 	github.com/hashicorp/terraform-plugin-go v0.31.0
 	github.com/hashicorp/terraform-plugin-sdk/v2 v2.40.1
 	github.com/jinzhu/copier v0.4.0
@@ -21,16 +23,17 @@ require (
 	github.com/nutanix/ntnx-api-golang-clients/objects-go-client/v4 v4.1.2
 	github.com/nutanix/ntnx-api-golang-clients/prism-go-client/v4 v4.4.2
 	github.com/nutanix/ntnx-api-golang-clients/security-go-client/v4 v4.2.1
+	github.com/nutanix/ntnx-api-golang-clients/tenancy-go-client/v4 v4.0.2-alpha.1
 	github.com/nutanix/ntnx-api-golang-clients/vmm-go-client/v4 v4.3.2
 	github.com/nutanix/ntnx-api-golang-clients/volumes-go-client/v4 v4.3.2
 	github.com/spf13/cast v1.10.0
 	github.com/stretchr/testify v1.11.1
-	golang.org/x/crypto v0.57.0
+	golang.org/x/crypto v0.58.0
 	gopkg.in/yaml.v2 v2.4.0
 )
 
 require (
-	github.com/Azure/go-ntlmssp v0.0.0-20221128193559-754e69321358 // indirect
+	github.com/Azure/go-ntlmssp v0.1.1 // indirect
 	github.com/ChrisTrenkamp/goxpath v0.0.0-20210404020558-97928f7e12b6 // indirect
 	github.com/PaesslerAG/gval v1.2.4 // indirect
 	github.com/ProtonMail/go-crypto v1.4.1 // indirect
@@ -41,9 +44,8 @@ require (
 	github.com/cloudflare/circl v1.6.3 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/fatih/color v1.18.0 // indirect
-	github.com/go-git/go-git/v5 v5.19.1 // indirect
+	github.com/go-git/go-git/v5 v5.19.2 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
-	github.com/gofrs/flock v0.13.0
 	github.com/gofrs/uuid v4.4.0+incompatible // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
@@ -55,7 +57,6 @@ require (
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/hashicorp/go-plugin v1.7.0 // indirect
 	github.com/hashicorp/go-retryablehttp v0.7.8 // indirect
-	github.com/hashicorp/go-version v1.9.0
 	github.com/hashicorp/hc-install v0.9.4 // indirect
 	github.com/hashicorp/hcl/v2 v2.24.0 // indirect
 	github.com/hashicorp/logutils v1.0.0 // indirect
@@ -83,6 +84,7 @@ require (
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/shopspring/decimal v1.3.1 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
+	github.com/stretchr/objx v0.8.0 // indirect
 	github.com/tidwall/transform v0.0.0-20201103190739-32f242e2dbde // indirect
 	github.com/vmihailenco/msgpack v4.0.4+incompatible // indirect
 	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
@@ -90,10 +92,10 @@ require (
 	github.com/zclconf/go-cty v1.18.1 // indirect
 	golang.org/x/mod v0.41.0 // indirect
 	golang.org/x/net v0.60.0 // indirect
-	golang.org/x/sync v0.23.0 // indirect
-	golang.org/x/sys v0.48.0 // indirect
-	golang.org/x/text v0.42.0 // indirect
-	golang.org/x/tools v0.49.0 // indirect
+	golang.org/x/sync v0.24.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
+	golang.org/x/tools v0.51.0 // indirect
 	google.golang.org/appengine v1.6.8 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260610212136-7ab31c22f7ad // indirect
 	google.golang.org/grpc v1.83.2 // indirect

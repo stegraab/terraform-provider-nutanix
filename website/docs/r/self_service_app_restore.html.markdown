@@ -10,6 +10,10 @@ description: |-
 
 Run restore action in application to restore from recovery point.
 
+## Timeouts
+
+Default wait is **60 minutes**. Increase with resource `timeouts` or provider `wait_timeout` (minutes). Provider `wait_timeout` extends the wait when larger than the resource default; it does not shorten it.
+
 ## Example Usage
 
 ```hcl

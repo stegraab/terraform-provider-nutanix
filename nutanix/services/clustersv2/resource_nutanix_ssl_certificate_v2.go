@@ -94,12 +94,12 @@ func ResourceNutanixSSLCertificateV2Create(ctx context.Context, d *schema.Resour
 	updateSpec := config.NewSSLCertificate()
 
 	// WriteOnly secrets must be read from raw config (not d.Get).
-	if value, ok := sslCertificateWriteOnlyString(d, "passphrase"); ok {
+	if value, ok := common.GetWriteOnlyString(d, "passphrase"); ok {
 		updateSpec.Passphrase = utils.StringPtr(value)
 	} else {
 		logWriteOnlyLookupMiss(d, "passphrase")
 	}
-	if value, ok := sslCertificateWriteOnlyString(d, "private_key"); ok {
+	if value, ok := common.GetWriteOnlyString(d, "private_key"); ok {
 		updateSpec.PrivateKey = utils.StringPtr(value)
 	} else {
 		logWriteOnlyLookupMiss(d, "private_key")
@@ -264,19 +264,4 @@ func validateSSLCertificatePrivateKeyVersion(_ context.Context, d *schema.Resour
 		return fmt.Errorf("private_key must be configured when private_key_version is set")
 	}
 	return nil
-}
-
-// The fork has not yet adopted upstream's common.GetWriteOnlyString helper.
-// These top-level schema attributes are strings; read them only from raw config.
-func sslCertificateWriteOnlyString(d *schema.ResourceData, attr string) (string, bool) {
-	raw := d.GetRawConfig()
-	if raw.IsNull() || !raw.IsKnown() {
-		return "", false
-	}
-	value := raw.GetAttr(attr)
-	if value.IsNull() || !value.IsKnown() {
-		return "", false
-	}
-	secret := value.AsString()
-	return secret, secret != ""
 }
