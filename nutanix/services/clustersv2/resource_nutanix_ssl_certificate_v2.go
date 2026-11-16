@@ -6,6 +6,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/hashicorp/go-cty/cty"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
@@ -39,9 +40,27 @@ func ResourceNutanixSSLCertificateV2() *schema.Resource {
 				Sensitive: true,
 			},
 			"private_key": {
-				Type:      schema.TypeString,
-				Optional:  true,
-				Sensitive: true,
+				Type:          schema.TypeString,
+				Optional:      true,
+				Sensitive:     true,
+				ConflictsWith: []string{"private_key_wo"},
+			},
+			"private_key_wo": {
+				Type:          schema.TypeString,
+				Optional:      true,
+				Sensitive:     true,
+				WriteOnly:     true,
+				ConflictsWith: []string{"private_key"},
+				RequiredWith:  []string{"private_key_wo_version"},
+				ValidateFunc:  validation.StringIsNotEmpty,
+				Description:   "Base64-encoded private key. Not persisted in Terraform plan or state; requires Terraform 1.11 or later.",
+			},
+			"private_key_wo_version": {
+				Type:         schema.TypeInt,
+				Optional:     true,
+				RequiredWith: []string{"private_key_wo"},
+				ValidateFunc: validation.IntAtLeast(1),
+				Description:  "Increment to upload a changed write-only private key with its matching certificate.",
 			},
 			"public_certificate": {
 				Type:     schema.TypeString,
@@ -86,8 +105,12 @@ func ResourceNutanixSSLCertificateV2Create(ctx context.Context, d *schema.Resour
 	if value, ok := utils.IsStringSetAndNotEmpty(d.Get("passphrase")); ok {
 		updateSpec.Passphrase = utils.StringPtr(value)
 	}
-	if value, ok := utils.IsStringSetAndNotEmpty(d.Get("private_key")); ok {
-		updateSpec.PrivateKey = utils.StringPtr(value)
+	privateKey, diags := sslCertificatePrivateKey(d)
+	if diags.HasError() {
+		return diags
+	}
+	if privateKey != "" {
+		updateSpec.PrivateKey = utils.StringPtr(privateKey)
 	}
 	if value, ok := utils.IsStringSetAndNotEmpty(d.Get("public_certificate")); ok {
 		updateSpec.PublicCertificate = utils.StringPtr(value)
@@ -99,9 +122,7 @@ func ResourceNutanixSSLCertificateV2Create(ctx context.Context, d *schema.Resour
 		updateSpec.PrivateKeyAlgorithm = common.ExpandEnum[config.PrivateKeyAlgorithm](value)
 	}
 
-	// Log the update payload
-	aJSON, _ := json.MarshalIndent(updateSpec, "", "  ")
-	log.Printf("[DEBUG] SSL certificate update payload: %s", string(aJSON))
+	// Do not log the payload: it contains the private key and optional passphrase.
 
 	// Call the update API
 	updateSSLCertificateRequest := import2.UpdateSSLCertificateRequest{
@@ -137,7 +158,7 @@ func ResourceNutanixSSLCertificateV2Create(ctx context.Context, d *schema.Resour
 		return diag.Errorf("error while fetching SSL certificate task: %v", err)
 	}
 	taskDetails := taskResp.Data.GetValue().(prismConfig.Task)
-	aJSON, _ = json.MarshalIndent(taskDetails, "", "  ")
+	aJSON, _ := json.MarshalIndent(taskDetails, "", "  ")
 	log.Printf("[DEBUG] Update SSL Certificate Task Details: %s", string(aJSON))
 
 	d.SetId(utils.StringValue(taskDetails.ExtId))
@@ -219,4 +240,19 @@ func ResourceNutanixSSLCertificateV2Update(ctx context.Context, d *schema.Resour
 
 func ResourceNutanixSSLCertificateV2Delete(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
 	return nil
+}
+
+// Write-only values are available only in raw configuration, never through Get.
+func sslCertificatePrivateKey(d *schema.ResourceData) (string, diag.Diagnostics) {
+	value, diags := d.GetRawConfigAt(cty.GetAttrPath("private_key_wo"))
+	if diags.HasError() {
+		return "", diags
+	}
+	if !value.IsKnown() {
+		return "", diag.Errorf("private_key_wo must be known when uploading the SSL certificate")
+	}
+	if !value.IsNull() {
+		return value.AsString(), nil
+	}
+	return d.Get("private_key").(string), nil
 }
