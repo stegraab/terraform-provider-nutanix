@@ -94,7 +94,7 @@ func TestSSLCertificateWriteOnly(t *testing.T) {
           ephemeral = true
           default = %q
         }
-        `, key) + config(fmt.Sprintf("private_key_wo = var.private_key\nprivate_key_wo_version = %d", version))
+        `, key) + config(fmt.Sprintf("private_key = var.private_key\nprivate_key_version = %d", version))
 	}
 
 	check := func(expected []string, writeOnly bool) resource.TestCheckFunc {
@@ -106,8 +106,17 @@ func TestSSLCertificateWriteOnly(t *testing.T) {
 			}
 			if writeOnly {
 				attrs := s.RootModule().Resources[name].Primary.Attributes
-				if attrs["private_key_wo"] != "" || attrs["private_key"] != "" {
+				if attrs["private_key"] != "" {
 					return fmt.Errorf("private key persisted in state")
+				}
+				serialized, err := json.Marshal(s)
+				if err != nil {
+					return err
+				}
+				for _, secret := range expected {
+					if strings.Contains(string(serialized), secret) {
+						return fmt.Errorf("secret present in serialized state")
+					}
 				}
 			}
 			return nil
@@ -116,14 +125,13 @@ func TestSSLCertificateWriteOnly(t *testing.T) {
 	resource.UnitTest(t, resource.TestCase{
 		ProviderFactories: map[string]func() (*schema.Provider, error){"nutanix": func() (*schema.Provider, error) { return factory(), nil }},
 		Steps: []resource.TestStep{
-			{Config: config(`private_key = "legacy-key"`), Check: check([]string{"legacy-key"}, false)},
-			// Migration clears the legacy state attribute and retrieves the new key from raw config.
+			{Config: config(`private_key = "legacy-key"`), Check: check([]string{"legacy-key"}, true)},
+			// Existing configurations remain valid without a version; ephemeral inputs also work.
 			{Config: ephemeralConfig("write-only-key", 1), Check: check([]string{"legacy-key", "write-only-key"}, true)},
 			// The certificate is unchanged: the version alone must cause an upload.
 			{Config: ephemeralConfig("rotated-key", 2), Check: check([]string{"legacy-key", "write-only-key", "rotated-key"}, true)},
-			{Config: config("private_key = \"legacy-key\"\nprivate_key_wo = \"write-only-key\"\nprivate_key_wo_version = 1"), PlanOnly: true, ExpectError: regexp.MustCompile("Conflicting configuration arguments")},
-			{Config: config(`private_key_wo = "write-only-key"`), PlanOnly: true, ExpectError: regexp.MustCompile("Missing required argument")},
-			{Config: config(`private_key_wo_version = 1`), PlanOnly: true, ExpectError: regexp.MustCompile("Missing required argument")},
+			{Config: config(`private_key_version = 1`), PlanOnly: true, ExpectError: regexp.MustCompile("private_key must be configured")},
+			{Config: config("private_key = \"key\"\nprivate_key_version = 0"), PlanOnly: true, ExpectError: regexp.MustCompile("expected private_key_version to be at least")},
 			// Leave a valid configuration for the harness's final destroy.
 			{Config: ephemeralConfig("rotated-key", 2), Check: check([]string{"legacy-key", "write-only-key", "rotated-key"}, true)},
 		},
