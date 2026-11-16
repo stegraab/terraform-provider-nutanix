@@ -7,7 +7,7 @@ import (
 	"github.com/nutanix/ntnx-api-golang-clients/vmm-go-client/v4/models/vmm/v4/ahv/config"
 )
 
-func TestFirstAvailableIPv4Address(t *testing.T) {
+func TestFirstIPAddressStaticAndSecondary(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -84,7 +84,8 @@ func TestFirstAvailableIPv4Address(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got, ok := firstAvailableIPv4Address(tt.vm)
+			got := firstIPAddress(tt.vm.Nics, false)
+			ok := got != ""
 			if ok != tt.found {
 				t.Fatalf("unexpected found result: got %v want %v", ok, tt.found)
 			}

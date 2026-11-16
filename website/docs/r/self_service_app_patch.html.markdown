@@ -10,6 +10,10 @@ description: |-
 
 Run the specified patch on the application by running patch action to update vm configuration, add nics, add disks, add/delete categories.
 
+## Timeouts
+
+Default wait is **60 minutes**. Increase with resource `timeouts` or provider `wait_timeout` (minutes). Provider `wait_timeout` extends the wait when larger than the resource default; it does not shorten it.
+
 ## Example 1: Update VM Configuration
 
 This will run set patch config action in application.
