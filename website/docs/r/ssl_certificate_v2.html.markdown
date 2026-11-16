@@ -10,6 +10,8 @@ description: |-
 
 Update the SSL certificate for a specific cluster. To update the SSL certificate for a specific cluster, you must provide a valid certificate payload in `Base64` format. You can either import a new SSL certificate or replace an existing one by supplying all necessary fields, including the Base64-encoded certificate and private key. Alternatively, you can regenerate a self-signed certificate by specifying the privateKeyAlgorithm, noting that only the RSA_2048 algorithm is supported for SSL certificate regeneration. This process helps maintain the security and integrity of your cluster's communications by allowing you to update or regenerate the SSL certificate as needed.
 
+> **WriteOnly credentials:** `passphrase`, `private_key` are write-only. They are never stored in Terraform state. Re-supply them in configuration on every apply. Do not use `lifecycle.ignore_changes` on these attributes.
+
 ## Example Usage
 
 ```hcl
@@ -24,13 +26,43 @@ resource "nutanix_ssl_certificate_v2" "this" {
 
 ```
 
+## Private keys outside Terraform state
+
+Terraform 1.11 or later supports the write-only `private_key` argument.
+Supply the Base64-encoded key through an ephemeral value and
+increment `private_key_version` when changing it. The version is stored in
+state; the write-only key is excluded from plan and state artifacts.
+
+```hcl
+variable "private_key_pem" {
+  type      = string
+  sensitive = true
+  ephemeral = true
+}
+
+resource "nutanix_ssl_certificate_v2" "this" {
+  cluster_ext_id         = var.cluster_ext_id
+  private_key           = base64encode(var.private_key_pem)
+  private_key_version   = 1
+  public_certificate    = base64encode(var.certificate_pem)
+  ca_chain              = base64encode(var.ca_chain_pem)
+  private_key_algorithm = "RSA_2048"
+}
+```
+
+Retrieve the matching private key from a durable secret manager on every apply.
+Generating a fresh ephemeral key on each run does not preserve its match with
+an existing certificate. A managed `tls_private_key` resource still stores the
+key in its own state even when passed to `private_key`.
+
 ## Argument Reference
 
 The following arguments are supported:
 
 * `cluster_ext_id` (Required) — UUID of the cluster to which the host NIC belongs.
-* `passphrase` (Optional) — Passphrase used for SSL certificate.
-* `private_key` (Optional) — Private Key used for SSL certificate.
+* `passphrase` (Optional, WriteOnly) — Passphrase used for SSL certificate.
+* `private_key` (Optional, WriteOnly) — Base64-encoded private key, excluded from plan and state. Required when `private_key_version` is set.
+* `private_key_version` (Optional) — Positive integer. Increment to upload a changed key alongside its matching certificate. Changes to the write-only key alone do not trigger an update.
 * `public_certificate` (Optional) — Public Certificate used for SSL certificate.
 * `ca_chain` (Optional) — Description of the certificate authority (CA) chain.
 * `private_key_algorithm` (Required) — Private Key Algorithm used for SSL certificate.
