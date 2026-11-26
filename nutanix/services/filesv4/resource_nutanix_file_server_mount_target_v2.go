@@ -64,6 +64,7 @@ func ResourceNutanixFileServerMountTargetV2() *schema.Resource {
 				Type: schema.TypeString, Optional: true, Default: "NFS", ForceNew: true,
 				ValidateFunc: validation.StringInSlice([]string{"NFS", "SMB"}, false),
 			},
+			"nfs_properties": nfsMountTargetSchema(),
 			"smb_properties": smbMountTargetSchema(),
 			"state": {
 				Type:     schema.TypeString,
@@ -93,6 +94,11 @@ func resourceNutanixFileServerMountTargetV2Create(ctx context.Context, d *schema
 		}
 		d.SetId(stringValue(existing["extId"]))
 		_ = d.Set("ext_id", d.Id())
+		if len(d.Get("nfs_properties").([]interface{})) > 0 {
+			// A matching export can already exist after an interrupted create.
+			// Reconcile the declared policy instead of silently adopting its ACL.
+			return resourceNutanixFileServerMountTargetV2Update(ctx, d, meta)
+		}
 		return resourceNutanixFileServerMountTargetV2Read(ctx, d, meta)
 	}
 
@@ -151,6 +157,13 @@ func resourceNutanixFileServerMountTargetV2Read(_ context.Context, d *schema.Res
 	_ = d.Set("path", stringValue(item["path"]))
 	_ = d.Set("max_size_gb", intValue(item["maxSizeGB"]))
 	_ = d.Set("protocol", stringValue(item["protocol"]))
+	var nfsState []interface{}
+	if properties, ok := item["nfsProperties"].(map[string]interface{}); ok && stringValue(item["protocol"]) == "NFS" {
+		nfsState = flattenNfsMountTargetProperties(properties)
+	}
+	if err := d.Set("nfs_properties", nfsState); err != nil {
+		return diag.FromErr(err)
+	}
 	if properties, ok := item["smbProperties"].(map[string]interface{}); ok && stringValue(item["protocol"]) == "SMB" {
 		acl := []interface{}{}
 		for _, raw := range mountTargetSlice(properties["shareACL"]) {
@@ -219,6 +232,11 @@ func buildFileServerMountTargetPayload(d *schema.ResourceData) map[string]interf
 				"gid": -2,
 			},
 		},
+	}
+	if properties := buildNfsMountTargetProperties(d); properties != nil {
+		for key, value := range properties {
+			payload["nfsProperties"].(map[string]interface{})[key] = value
+		}
 	}
 	if d.Get("protocol").(string) == "SMB" {
 		delete(payload, "nfsProperties")
@@ -346,20 +364,36 @@ func resourceNutanixFileServerMountTargetV2Update(ctx context.Context, d *schema
 	if notFound {
 		return diag.Errorf("mount target disappeared during update")
 	}
-	properties, _ := item["smbProperties"].(map[string]interface{})
+	propertyKey := "smbProperties"
+	policy := "SMB share permissions"
+	var requested map[string]interface{}
+	if stringValue(item["protocol"]) == "NFS" {
+		propertyKey = "nfsProperties"
+		policy = "NFS export permissions"
+		requested = buildNfsMountTargetProperties(d)
+		if requested == nil {
+			return resourceNutanixFileServerMountTargetV2Read(ctx, d, meta)
+		}
+		if etag == "" {
+			return diag.Errorf("cannot update NFS export permissions without the mount target ETag")
+		}
+	} else {
+		requested = buildSmbMountTargetProperties(d)
+	}
+	properties, _ := item[propertyKey].(map[string]interface{})
 	if properties == nil {
 		properties = map[string]interface{}{}
 	}
-	for key, value := range buildSmbMountTargetProperties(d) {
+	for key, value := range requested {
 		properties[key] = value
 	}
-	payload := map[string]interface{}{"name": item["name"], "type": item["type"], "protocol": item["protocol"], "maxSizeGB": item["maxSizeGB"], "smbProperties": properties}
+	payload := map[string]interface{}{"name": item["name"], "type": item["type"], "protocol": item["protocol"], "maxSizeGB": item["maxSizeGB"], propertyKey: properties}
 	body, code, _, err := filesRequestWithHeaders(apiClient, http.MethodPut, fileServerMountTargetsPath(d)+"/"+d.Id(), payload, map[string]string{"If-Match": etag})
 	if err != nil {
 		return diag.FromErr(err)
 	}
 	if code >= http.StatusBadRequest || filesHasError(body) {
-		return diag.Errorf("error updating SMB share permissions: %s", filesErrorMessage(body, code))
+		return diag.Errorf("error updating %s: %s", policy, filesErrorMessage(body, code))
 	}
 	if taskID := responseTaskExtID(body); taskID != "" {
 		if err := waitForFilesDirectoryServiceTask(ctx, apiClient, d.Get("file_server_ext_id").(string), taskID, d.Timeout(schema.TimeoutUpdate), nil); err != nil {
